@@ -1,7 +1,7 @@
 blueprint:
-  name: Claude HA Bridge - Actionable Notifications (v1.3.0)
+  name: Claude HA Bridge - Actionable Notifications (v1.4.1)
   description: >
-    Version 1.3.0.
+    Version 1.4.1.
     Receives webhooks from the Claude HA Bridge daemon on a Mac and pushes
     actionable notifications to a mobile device. Button taps become
     `mobile_app_notification_action` events, which the Mac daemon routes
@@ -325,6 +325,7 @@ variables:
   notify_device_id: !input notify_device
   notify_service: >-
     notify.mobile_app_{{ device_attr(notify_device_id, 'name') | slugify }}
+  notification_tag: "{{ trigger.json.tag | default('claude', true) }}"
 
 action:
   - action: "{{ notify_service }}"
@@ -332,7 +333,7 @@ action:
       title: "{{ trigger.json.title | default('Claude', true) }}"
       message: "{{ trigger.json.message | default('', true) }}"
       data:
-        tag: "{{ trigger.json.tag | default('claude', true) }}"
+        tag: "{{ notification_tag }}"
         group: claude-ha-bridge
         push:
           sound: "{{ push_sound if push_sound else 'default' }}"
@@ -341,10 +342,16 @@ action:
           - action: approve
             title: !input approve_label
             authenticationRequired: false
+            data:
+              tag: "{{ notification_tag }}"
           - action: deny
             title: !input deny_label
             authenticationRequired: false
+            data:
+              tag: "{{ notification_tag }}"
           - action: stop
             title: !input stop_label
             destructive: true
             authenticationRequired: false
+            data:
+              tag: "{{ notification_tag }}"

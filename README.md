@@ -162,6 +162,17 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.4.1 - 2026-04-19
+- Blueprint: attach the notification `tag` to each actionable button's
+  own `data` payload. iOS strips top-level tag from the action event, so
+  the daemon previously received `{"action":"approve"}` without a tag
+  and could not route the reply.
+- Daemon: subscribe to `ios.action_fired` in addition to
+  `mobile_app_notification_action` and log every inbound event for easier
+  debugging.
+- `notify.sh`: survive malformed transcript lines while extracting the
+  last tool-use; render permission prompts as `<tool>: <input-preview>`.
+
 ### 1.4.0 - 2026-04-19
 - `notify.sh`: include a short session id in the push title so parallel
   Claude sessions are distinguishable (`Claude - project - ab12cd`).
