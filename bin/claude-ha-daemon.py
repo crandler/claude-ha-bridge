@@ -56,8 +56,16 @@ CLEANUP_INTERVAL_S = 30
 # right after a notification would race with it.
 PROMPT_GONE_GRACE_S = 15
 
-# Matches numbered prompt options Claude renders, e.g. " 1. Yes".
-_OPTION_LINE = re.compile(r"^\s*(\d+)\.\s")
+# Matches numbered prompt options Claude renders, e.g. " 1. Yes" or
+# "> 1. Yes" when the Claude TUI highlights the selected row with a caret.
+_OPTION_LINE = re.compile(r"^\s*[>❯]?\s*(\d+)\.\s")
+
+# How many lines to scan upward from the bottom of the pane when looking
+# for a prompt's option block. Claude renders the block at the very end,
+# so we don't need to go far -- but we allow a few non-matching lines
+# (cursor, input marker) between options without bailing.
+_PANE_SCAN_LINES = 15
+_PANE_NONMATCH_TOLERANCE = 3
 
 # Action prefixes the blueprint emits. Matching is explicit so tags
 # containing underscores never collide with the action name.
@@ -83,15 +91,25 @@ def detect_max_option(tmux_target: str) -> int | None:
         _LOG.warning("capture-pane failed for %s: %s", tmux_target, err)
         return None
 
-    # Scan from the bottom for the last contiguous block of "N. ..." lines.
+    # Scan from the bottom; collect numbered lines and tolerate a few
+    # non-matching lines between them (cursor row, empty line, prompt
+    # caption). Bail once we pass the tolerance window after the block.
     options: list[int] = []
-    for line in reversed(out.splitlines()[-40:]):
+    nonmatch_after_block = 0
+    for line in reversed(out.splitlines()[-_PANE_SCAN_LINES:]):
         m = _OPTION_LINE.match(line)
         if m:
             options.append(int(m.group(1)))
+            nonmatch_after_block = 0
         elif options:
-            break
-    return max(options) if options else None
+            nonmatch_after_block += 1
+            if nonmatch_after_block > _PANE_NONMATCH_TOLERANCE:
+                break
+    # Plausibility guard: Claude's prompts cap at 3 options. Anything
+    # larger is almost certainly an unrelated numbered list elsewhere.
+    if not options or max(options) > 5:
+        return None
+    return max(options)
 
 
 def resolve_keys(action: str, max_option: int | None, overrides: dict[str, str]) -> str | None:
