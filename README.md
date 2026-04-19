@@ -122,9 +122,11 @@ Add to `~/.claude/settings.json` (merge with existing `hooks`):
 5. Daemon matches `tag` -> `tmux send-keys` into the Claude pane
    (`1\n`, `2\n`, `Ctrl-C`)
 
-The action -> key mapping lives in `bin/claude-ha-daemon.py` as
-`DEFAULT_ACTIONS` and can be overridden via the `actions` field in
-`config.json`.
+The action -> key mapping is computed in `resolve_keys()` in
+`bin/claude-ha-daemon.py` (approve/allowalways/deny/stop) and can be
+overridden per-button via the `actions` field in `config.json`.
+Override values are checked against a small whitelist of plausible
+answer keys.
 
 ## Troubleshooting
 
@@ -170,8 +172,10 @@ the automation/blueprint in HA.
   trusted for routing.
 - The session file containing the token is deleted on first successful
   dispatch, so the token burns with it.
-- Routing tags are whitelisted (`^[A-Za-z0-9_-]{1,64}$`) and resolved
-  inside `sessions/` to defuse path-traversal / symlink escapes.
+- Routing tags are whitelisted (`^[A-Za-z0-9_-]{1,64}$`) in `notify.sh`
+  before the session file is written, and the daemon enumerates session
+  files via `Path.glob("*.json")` directly under `sessions/` -- both
+  defuse path-traversal / symlink escapes.
 - `daemon.log`, `notify.log` and session files are written with mode
   `600` (umask 077 + explicit chmod).
 - Daemon only acts on known actions (`approve`, `allowalways`, `deny`,
@@ -179,6 +183,26 @@ the automation/blueprint in HA.
 - No inbound ports on the Mac; WebSocket is outbound TLS.
 
 ## Changelog
+
+### 2.1.2 - 2026-04-19
+- **Reliability:** LaunchAgent `KeepAlive` no longer restarts the daemon
+  on a regular non-zero exit; the auth-failure SystemExit(1) was being
+  defeated by the previous `SuccessfulExit: false` clause. Restart now
+  happens only on signal-style crashes; the daemon's own log message
+  tells you to `launchctl kickstart` after fixing the underlying issue.
+- **Security:** `notify.sh` now whitelists the routing tag against
+  `^[A-Za-z0-9_-]{1,64}$` before writing the session file -- both real
+  sources match by construction, but defense-in-depth against an
+  unexpected `session_id` shape from upstream.
+- **UX:** `notify.sh` skips the webhook entirely when not running inside
+  tmux. Without a tmux pane the daemon could never route a button tap,
+  so previous installs would surface a push whose buttons all silently
+  dropped on tap.
+- **Reliability:** `notify.log` rotates at 1 MB with a single `.1`
+  backup, mirroring the daemon log.
+- **Docs:** README correctly references `resolve_keys()` instead of the
+  long-removed `DEFAULT_ACTIONS` constant, and the tag-whitelist
+  security note now matches the actual code path.
 
 ### 2.1.1 - 2026-04-19
 - **UX:** permission-prompt push body no longer dumps raw tool `input`
