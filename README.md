@@ -184,6 +184,16 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.1.4 - 2026-04-19
+- **UX:** `tap_url` default switched from the `https://claude.ai/code`
+  Universal Link to the `claude://` custom URL scheme. The Universal
+  Link opened the iOS app but rendered Code as an in-app WebView; the
+  custom scheme opens the app natively. iOS shows a one-time cross-app
+  confirmation prompt -- choose "Always Allow" to suppress it for
+  future launches. The Universal Link remains a documented fallback
+  inside the input description for users who prefer prompt-free
+  WebView behaviour.
+
 ### 2.1.3 - 2026-04-19
 - **UX:** notifications now carry a tap URL pointing to the Claude iOS
   app (`https://claude.ai/code` Universal Link by default,
