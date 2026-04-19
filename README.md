@@ -160,14 +160,57 @@ the automation/blueprint in HA.
 
 ## Security notes
 
-- `config.json` holds a long-lived HA token -- stored with mode `600`
-- Webhook uses HA's unguessable webhook ID as the only secret; rotate via
-  wizard + HA automation re-save if exposed
-- Daemon only acts on known actions (`approve`, `deny`, `stop`); anything
-  else is logged and ignored
-- No inbound ports on the Mac; WebSocket is outbound TLS
+- `config.json` holds a long-lived HA token -- stored with mode `600`.
+- The webhook trigger is `local_only: true` by default; flip it to
+  `false` only for remote-triggered setups and add HMAC then.
+- Every push carries a one-shot 128-bit token. Button events are only
+  acted on when the token matches the exact session that requested the
+  prompt; replayed or forged events are dropped silently.
+- The `tag` on the push is used only for iOS grouping and is not
+  trusted for routing.
+- The session file containing the token is deleted on first successful
+  dispatch, so the token burns with it.
+- Routing tags are whitelisted (`^[A-Za-z0-9_-]{1,64}$`) and resolved
+  inside `sessions/` to defuse path-traversal / symlink escapes.
+- `daemon.log`, `notify.log` and session files are written with mode
+  `600` (umask 077 + explicit chmod).
+- Daemon only acts on known actions (`approve`, `allowalways`, `deny`,
+  `stop`); unknown button events are logged and ignored.
+- No inbound ports on the Mac; WebSocket is outbound TLS.
 
 ## Changelog
+
+### 2.0.0 - 2026-04-19 (breaking)
+- **Security (S1):** notify.sh now generates a fresh 128-bit one-shot
+  token per push. The Blueprint encodes it into each action button and
+  the daemon routes events by token, not by tag. Replayed or forged
+  button events without a matching session file are dropped.
+  - *Upgrade:* re-import Blueprint v2.0.0 and re-save the automation.
+    Running notify.sh on an older daemon, or vice versa, will not
+    authorise any buttons.
+- **Security (S2):** Tag whitelist (`^[A-Za-z0-9_-]{1,64}$`) plus
+  resolved-path check under `sessions/` -- replay events can no longer
+  coerce the daemon into deleting `.json` files outside the sessions
+  directory.
+- **Security (S3):** `daemon.log`, `notify.log` and per-session files
+  are now written with mode 600 (umask + chmod).
+- **Security (S4):** Blueprint webhook trigger defaults to
+  `local_only: true`. Remote-triggered setups must flip this manually
+  and should add HMAC protection.
+- **Bugfix (B1):** Action-name split now uses a known-prefix list
+  instead of `partition("_")`, so tags that contain underscores are
+  preserved.
+- **Bugfix (B2):** Websocket URL is derived via scheme partition and
+  rejects non-http(s) inputs at startup -- `replace("http","ws")` was
+  fragile on upper-case schemes and hosts that contain `http`.
+- **Bugfix (B3):** A failed `subscribe_events` response now breaks out
+  of the websocket context so the reconnect loop retries with backoff
+  instead of sitting idle without any subscriptions.
+- **Bugfix (B5):** `detect_max_option` tolerates a leading `>`/`❯`
+  highlight on the selected row, allows up to 3 non-matching lines
+  (cursor, input marker) between option lines, and rejects numbered
+  blocks with max > 5 so unrelated enumerations are not misread as a
+  prompt.
 
 ### 1.8.1 - 2026-04-19
 - Daemon: retract pushes as soon as the Claude prompt is no longer
