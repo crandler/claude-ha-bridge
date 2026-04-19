@@ -162,6 +162,12 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.3.0 - 2026-04-19
+- Blueprint: add all 127 notification sounds shipped with the iOS
+  Companion App (Alexa, Daisy, Morgan Freeman voice packs) as dropdown
+  presets. Sourced from `home-assistant/iOS` repo at import time; custom
+  filenames remain supported via `custom_value`.
+
 ### 1.2.2 - 2026-04-19
 - Blueprint: surface the version in the blueprint name and description so
   re-imports are visibly confirmed in the HA UI.
