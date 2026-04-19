@@ -237,6 +237,17 @@ these are not touched by the uninstaller.
 
 ## Changelog
 
+### 2.3.0 - 2026-04-19
+- **Uninstaller:** new `uninstall.sh` with the same one-liner ergonomics
+  as `bootstrap.sh`
+  (`bash -c "$(curl -fsSL .../uninstall.sh)"`). Stops/removes the
+  LaunchAgent, deletes `~/.config/claude-ha-bridge` (incl. token) and
+  the bootstrap checkout at `~/.claude-ha-bridge`. Prompts for
+  confirmation (skip with `--yes`). Only touches the checkout dir
+  when it actually looks like the project, so a misconfigured
+  `CLAUDE_HA_BRIDGE_DIR` will not wipe unrelated files. Claude Code
+  hook entry and HA automation/blueprint are flagged as manual steps.
+
 ### 2.2.0 - 2026-04-19
 - **Installer:** new `bootstrap.sh` enables a true one-liner install
   and upgrade via
