@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import signal
 import subprocess
 import sys
@@ -205,16 +204,24 @@ async def run(cfg: dict[str, Any]) -> None:
                 backoff = min(backoff * 2, 60)
 
 
+async def _supervise(cfg: dict[str, Any]) -> None:
+    """Run the websocket loop and cancel it cleanly on SIGINT/SIGTERM."""
+    task = asyncio.create_task(run(cfg))
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, task.cancel)
+    try:
+        await task
+    except asyncio.CancelledError:
+        _LOG.info("Shutdown requested, exiting")
+
+
 def main() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
     cfg = load_config()
-
-    loop = asyncio.new_event_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, loop.stop)
     try:
-        loop.run_until_complete(run(cfg))
+        asyncio.run(_supervise(cfg))
     except SystemExit:
         raise
     except Exception as err:

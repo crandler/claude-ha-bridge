@@ -162,6 +162,13 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.5.2 - 2026-04-19
+- Daemon: shut down cleanly on SIGINT/SIGTERM via `task.cancel()` instead
+  of `loop.stop()`. The latter raised
+  `RuntimeError: Event loop stopped before Future completed` on every
+  restart; now the shutdown path logs `Shutdown requested, exiting` and
+  exits without a traceback.
+
 ### 1.5.1 - 2026-04-19
 - Daemon: drop the stderr StreamHandler. launchd already redirects
   stderr into `daemon.log`, so the extra handler caused every log line
