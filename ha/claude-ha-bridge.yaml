@@ -1,0 +1,80 @@
+blueprint:
+  name: Claude HA Bridge - Actionable Notifications
+  description: >
+    Receives webhooks from the Claude HA Bridge daemon on a Mac and pushes
+    actionable notifications to a mobile device. Button taps become
+    `mobile_app_notification_action` events, which the Mac daemon routes
+    back into the matching Claude tmux session via `tmux send-keys`.
+  domain: automation
+  input:
+    notify_service:
+      name: Mobile notify service
+      description: >
+        The notify service for your mobile_app, e.g. `notify.mobile_app_iphone`.
+        Find it in Developer Tools -> Services.
+      selector:
+        text:
+    webhook_id:
+      name: Webhook ID
+      description: >
+        Must match `webhook_id` in ~/.config/claude-ha-bridge/config.json on
+        the Mac. The install wizard generates one if you don't have it yet.
+      selector:
+        text:
+    approve_label:
+      name: Approve button label
+      default: Erlauben
+      selector:
+        text:
+    deny_label:
+      name: Deny button label
+      default: Ablehnen
+      selector:
+        text:
+    stop_label:
+      name: Stop button label
+      default: Stoppen
+      selector:
+        text:
+    notification_sound:
+      name: iOS notification sound (optional)
+      description: Leave empty for default. Use e.g. `US-EN-Morgan-Freeman-Helpful.wav`.
+      default: ""
+      selector:
+        text:
+
+mode: parallel
+max: 10
+
+trigger:
+  - platform: webhook
+    webhook_id: !input webhook_id
+    allowed_methods:
+      - POST
+    local_only: false
+
+variables:
+  push_sound: !input notification_sound
+
+action:
+  - action: !input notify_service
+    data:
+      title: "{{ trigger.json.title | default('Claude', true) }}"
+      message: "{{ trigger.json.message | default('', true) }}"
+      data:
+        tag: "{{ trigger.json.tag | default('claude', true) }}"
+        group: claude-ha-bridge
+        push:
+          sound: "{{ push_sound if push_sound else 'default' }}"
+          interruption-level: time-sensitive
+        actions:
+          - action: approve
+            title: !input approve_label
+            authenticationRequired: false
+          - action: deny
+            title: !input deny_label
+            authenticationRequired: false
+          - action: stop
+            title: !input stop_label
+            destructive: true
+            authenticationRequired: false

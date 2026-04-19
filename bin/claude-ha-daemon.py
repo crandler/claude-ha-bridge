@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""Claude <-> Home Assistant bridge daemon.
+
+Subscribes to HA's WebSocket API for `mobile_app_notification_action` events.
+When an action event arrives whose `tag` matches a registered Claude session,
+dispatches the chosen reply into the corresponding tmux pane via `send-keys`.
+
+No reverse SSH, no inbound ports -- the daemon connects outbound to HA.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+try:
+    import aiohttp
+except ImportError:
+    sys.stderr.write(
+        "aiohttp missing -- run: /usr/bin/python3 -m pip install --user aiohttp\n"
+    )
+    sys.exit(1)
+
+CONFIG_DIR = Path.home() / ".config" / "claude-ha-bridge"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+SESSIONS_DIR = CONFIG_DIR / "sessions"
+LOG_FILE = CONFIG_DIR / "daemon.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_FILE),
+        logging.StreamHandler(sys.stderr),
+    ],
+)
+_LOG = logging.getLogger("claude-ha-bridge")
+
+# Map action identifier -> keys sent to tmux pane
+DEFAULT_ACTIONS = {
+    "approve": "1\n",
+    "deny": "2\n",
+    "stop": "\x03",  # Ctrl-C
+}
+
+
+def load_config() -> dict[str, Any]:
+    """Load daemon config -- HA URL, long-lived token, custom action map."""
+    if not CONFIG_FILE.exists():
+        raise SystemExit(
+            f"Config missing: {CONFIG_FILE}\nRun install.sh first."
+        )
+    with CONFIG_FILE.open() as f:
+        cfg = json.load(f)
+    for key in ("ha_url", "ha_token"):
+        if not cfg.get(key):
+            raise SystemExit(f"Config field '{key}' missing in {CONFIG_FILE}")
+    cfg.setdefault("actions", DEFAULT_ACTIONS)
+    return cfg
+
+
+def load_session(tag: str) -> dict[str, Any] | None:
+    """Load tmux target for a Claude session tag."""
+    path = SESSIONS_DIR / f"{tag}.json"
+    if not path.exists():
+        return None
+    try:
+        with path.open() as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as err:
+        _LOG.warning("Failed to read session %s: %s", tag, err)
+        return None
+
+
+def dispatch_to_tmux(session: dict[str, Any], keys: str) -> bool:
+    """Send keys to the tmux pane registered for a Claude session."""
+    target = session.get("tmux_target")
+    if not target:
+        _LOG.warning("Session has no tmux_target: %s", session)
+        return False
+    try:
+        subprocess.run(
+            ["tmux", "send-keys", "-t", target, keys],
+            check=True,
+            timeout=5,
+        )
+        _LOG.info("Dispatched %r to %s", keys, target)
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as err:
+        _LOG.error("tmux send-keys failed for %s: %s", target, err)
+        return False
+
+
+async def handle_action_event(cfg: dict[str, Any], event: dict[str, Any]) -> None:
+    """Process one mobile_app_notification_action event from HA."""
+    data = event.get("data", {})
+    action = data.get("action")
+    tag = data.get("tag")
+    if not action or not tag:
+        return
+
+    # Only act on actions we know -- ignore unrelated mobile_app notifications
+    keys = cfg["actions"].get(action)
+    if keys is None:
+        _LOG.debug("Unknown action %r, skipping", action)
+        return
+
+    session = load_session(tag)
+    if session is None:
+        _LOG.debug("No session registered for tag %r", tag)
+        return
+
+    _LOG.info("Action %s -> session %s (%s)", action, tag, session.get("tmux_target"))
+    dispatch_to_tmux(session, keys)
+
+
+async def run(cfg: dict[str, Any]) -> None:
+    """Main WebSocket loop with reconnect."""
+    ws_url = cfg["ha_url"].rstrip("/").replace("http", "ws", 1) + "/api/websocket"
+    backoff = 2
+    msg_id = 1
+
+    async with aiohttp.ClientSession() as http:
+        while True:
+            try:
+                _LOG.info("Connecting to %s", ws_url)
+                async with http.ws_connect(ws_url, heartbeat=30) as ws:
+                    auth_required = await ws.receive_json()
+                    if auth_required.get("type") != "auth_required":
+                        _LOG.error("Unexpected handshake: %s", auth_required)
+                        continue
+
+                    await ws.send_json({"type": "auth", "access_token": cfg["ha_token"]})
+                    auth_result = await ws.receive_json()
+                    if auth_result.get("type") != "auth_ok":
+                        _LOG.error("Auth failed: %s", auth_result)
+                        raise SystemExit(1)
+
+                    _LOG.info("Authenticated, subscribing to events")
+                    await ws.send_json({
+                        "id": msg_id,
+                        "type": "subscribe_events",
+                        "event_type": "mobile_app_notification_action",
+                    })
+                    msg_id += 1
+                    sub_result = await ws.receive_json()
+                    if not sub_result.get("success"):
+                        _LOG.error("Subscribe failed: %s", sub_result)
+                        continue
+
+                    backoff = 2
+                    async for msg in ws:
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        payload = json.loads(msg.data)
+                        if payload.get("type") != "event":
+                            continue
+                        event = payload.get("event", {})
+                        await handle_action_event(cfg, event)
+
+            except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError) as err:
+                _LOG.warning("Connection dropped: %s -- retry in %ds", err, backoff)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 60)
+
+
+def main() -> None:
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    cfg = load_config()
+
+    loop = asyncio.new_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, loop.stop)
+    try:
+        loop.run_until_complete(run(cfg))
+    except SystemExit:
+        raise
+    except Exception as err:
+        _LOG.exception("Fatal: %s", err)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
