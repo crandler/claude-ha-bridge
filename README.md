@@ -53,6 +53,7 @@ ha/claude-ha-bridge.yaml             # Home Assistant Blueprint
 launchd/com.crandler.claude-ha-bridge.plist  # LaunchAgent template
 bootstrap.sh                         # one-liner: clone/update + install.sh
 install.sh                           # interactive installer wizard
+uninstall.sh                         # one-liner: remove LaunchAgent, config, clone
 ```
 
 ## Prerequisites
@@ -187,14 +188,30 @@ tail -f ~/.config/claude-ha-bridge/daemon.log
 
 ## Uninstall
 
+One-liner:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/crandler/claude-ha-bridge/main/uninstall.sh)"
+```
+
+Stops and removes the LaunchAgent, deletes
+`~/.config/claude-ha-bridge` (runtime state **including the HA
+token**), and removes the bootstrap checkout at `~/.claude-ha-bridge`.
+Custom checkout paths are only removed when they look like a
+claude-ha-bridge repo. Pass `--yes` to skip the confirmation.
+
+Or do it manually:
+
 ```bash
 launchctl bootout gui/$(id -u)/com.crandler.claude-ha-bridge
 rm ~/Library/LaunchAgents/com.crandler.claude-ha-bridge.plist
 rm -rf ~/.config/claude-ha-bridge
+rm -rf ~/.claude-ha-bridge      # only if you used the bootstrap one-liner
 ```
 
-Remove the Claude Code hook entry from `~/.claude/settings.json` and delete
-the automation/blueprint in HA.
+Either way, remove the Claude Code hook entry from
+`~/.claude/settings.json` and delete the automation/blueprint in HA --
+these are not touched by the uninstaller.
 
 ## Security notes
 
