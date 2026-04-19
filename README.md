@@ -84,7 +84,7 @@ The wizard
 1. HA -> Settings -> Automations & Scenes -> Blueprints
 2. "Import Blueprint" -> paste from clipboard -> save
 3. Create an automation from the blueprint, set:
-   - `notify_service` = `notify.mobile_app_<your_device>`
+   - `notify_device` = pick your phone from the device dropdown
    - `webhook_id` = the value the wizard showed you
 
 ### Wire the Claude Code hook
@@ -161,6 +161,12 @@ the automation/blueprint in HA.
 - No inbound ports on the Mac; WebSocket is outbound TLS
 
 ## Changelog
+
+### 1.1.0 - 2026-04-19
+- Blueprint: replace free-text `notify_service` input with a device selector
+  filtered to the `mobile_app` integration; the notify service is derived
+  from the selected device name. Re-import the blueprint and re-save the
+  automation to pick up the new input.
 
 ### 1.0.0 - 2026-04-19
 - Initial release: daemon, notification hook, HA Blueprint, LaunchAgent,

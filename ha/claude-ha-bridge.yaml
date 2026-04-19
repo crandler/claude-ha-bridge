@@ -7,13 +7,16 @@ blueprint:
     back into the matching Claude tmux session via `tmux send-keys`.
   domain: automation
   input:
-    notify_service:
-      name: Mobile notify service
+    notify_device:
+      name: Mobile device
       description: >
-        The notify service for your mobile_app, e.g. `notify.mobile_app_iphone`.
-        Find it in Developer Tools -> Services.
+        Pick the mobile_app device to notify. The notify service is derived
+        automatically as `notify.mobile_app_<device_name_slug>`.
       selector:
-        text:
+        device:
+          filter:
+            - integration: mobile_app
+          multiple: false
     webhook_id:
       name: Webhook ID
       description: >
@@ -55,9 +58,12 @@ trigger:
 
 variables:
   push_sound: !input notification_sound
+  notify_device_id: !input notify_device
+  notify_service: >-
+    notify.mobile_app_{{ device_attr(notify_device_id, 'name') | slugify }}
 
 action:
-  - action: !input notify_service
+  - action: "{{ notify_service }}"
     data:
       title: "{{ trigger.json.title | default('Claude', true) }}"
       message: "{{ trigger.json.message | default('', true) }}"

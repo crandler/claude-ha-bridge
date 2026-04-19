@@ -135,8 +135,8 @@ Done. Next steps:
    - Open HA: Settings -> Automations & Scenes -> Blueprints
    - Click "Import Blueprint", paste the YAML from your clipboard, save
    - Create an automation from it, set:
-       notify_service = notify.mobile_app_<your_device>
-       webhook_id     = ${WEBHOOK_ID}
+       notify_device = pick your phone from the device dropdown
+       webhook_id    = ${WEBHOOK_ID}
 
 2. Wire the Claude Code hook
    Add this to ~/.claude/settings.json (merge with existing hooks):
