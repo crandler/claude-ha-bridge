@@ -43,7 +43,11 @@ LOG_FILE = CONFIG_DIR / "daemon.log"
 # payloads, and must not be world-readable on shared macOS accounts.
 os.umask(0o077)
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-_LOG_HANDLER = logging.FileHandler(LOG_FILE)
+# Rotate at 1 MB and keep 3 backups so long-running daemons cannot fill
+# the disk. Rotated files inherit the 0600 umask we just set.
+_LOG_HANDLER = logging.handlers.RotatingFileHandler(
+    LOG_FILE, maxBytes=1_048_576, backupCount=3
+)
 try:
     os.chmod(LOG_FILE, 0o600)
 except OSError:
