@@ -112,6 +112,41 @@ Add to `~/.claude/settings.json` (merge with existing `hooks`):
 }
 ```
 
+## Upgrade
+
+When pulling a new version of this repo:
+
+```bash
+cd ~/Desktop/CODING/Privat/claude-ha-bridge
+git pull
+./install.sh
+```
+
+The wizard re-uses your existing `ha_url`, `ha_token` and `webhook_id`
+as defaults (just press Enter), merges them back into `config.json`
+without touching optional fields like `mobile_app_service` or
+`actions` overrides, re-renders the LaunchAgent plist with the new
+daemon code and reloads the daemon (`launchctl bootout` + `bootstrap`).
+The hook entry in `~/.claude/settings.json` does not need to change.
+
+If the changelog mentions a blueprint bump (or the
+`Blueprint version: X.Y.Z` line in `ha/claude-ha-bridge.yaml` is newer
+than what HA shows), re-import the blueprint:
+
+1. The wizard already copied the new YAML to your clipboard. If you
+   skipped the wizard, run `pbcopy < ha/claude-ha-bridge.yaml`.
+2. HA: Settings -> Automations & Scenes -> Blueprints -> menu next to
+   *Claude HA Bridge - Actionable Notifications* -> "Re-import" ->
+   paste -> save.
+3. Open the existing automation, *Save* it once so HA picks up any
+   new inputs. Defaults (`tap_url`, `help_message` etc.) take effect
+   silently if you don't change them.
+
+No data loss on upgrade: session files in
+`~/.config/claude-ha-bridge/sessions/` are short-lived (max 10 min),
+the daemon log rotates automatically, and the venv keeps `aiohttp`
+across runs.
+
 ## How a round-trip looks
 
 1. Claude asks for permission -> `notify.sh` registers the current tmux
