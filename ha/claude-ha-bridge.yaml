@@ -1,7 +1,7 @@
 blueprint:
   name: Claude HA Bridge - Actionable Notifications
   description: >
-    Blueprint version: 1.4.2.
+    Blueprint version: 1.5.0.
     Receives webhooks from the Claude HA Bridge daemon on a Mac and pushes
     actionable notifications to a mobile device. Button taps become
     `mobile_app_notification_action` events, which the Mac daemon routes
@@ -339,19 +339,13 @@ action:
           sound: "{{ push_sound if push_sound else 'default' }}"
           interruption-level: time-sensitive
         actions:
-          - action: approve
+          - action: "approve_{{ notification_tag }}"
             title: !input approve_label
             authenticationRequired: false
-            data:
-              tag: "{{ notification_tag }}"
-          - action: deny
+          - action: "deny_{{ notification_tag }}"
             title: !input deny_label
             authenticationRequired: false
-            data:
-              tag: "{{ notification_tag }}"
-          - action: stop
+          - action: "stop_{{ notification_tag }}"
             title: !input stop_label
             destructive: true
             authenticationRequired: false
-            data:
-              tag: "{{ notification_tag }}"

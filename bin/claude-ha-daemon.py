@@ -112,6 +112,10 @@ async def handle_action_event(cfg: dict[str, Any], event: dict[str, Any]) -> Non
         action_data = data.get("action_data") or {}
         if isinstance(action_data, dict):
             tag = action_data.get("tag")
+    # iOS Companion strips per-action custom data, so the blueprint encodes
+    # the tag into the action name as `<name>_<tag>`. Split it back out.
+    if action and "_" in action and not tag:
+        action, _, tag = action.partition("_")
     if not action or not tag:
         return
 

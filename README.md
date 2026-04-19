@@ -162,6 +162,12 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.5.0 - 2026-04-19
+- Blueprint + daemon: encode the routing tag into the action name itself
+  (`approve_<tag>`). iOS Companion App does not reflect per-action
+  `data` back into the event, so the action name is the only reliable
+  carrier. Daemon splits the suffix off before dispatching.
+
 ### 1.4.2 - 2026-04-19
 - Blueprint: remove the version suffix from the blueprint name. A
   changing name caused HA to treat each re-import as a separate
