@@ -79,7 +79,12 @@ if [[ -f "${CONFIG_FILE}" ]]; then
 fi
 
 prompt HA_URL "Home Assistant URL (e.g. https://ha.example.com)" "${existing_ha_url}"
+shopt -s nocasematch
 [[ "${HA_URL}" =~ ^https?:// ]] || die "HA URL must start with http:// or https://"
+if [[ "${HA_URL}" =~ ^http:// ]]; then
+  warn "http:// URL given -- your long-lived HA token will travel UNENCRYPTED on every WebSocket reconnect and on every clear_notification call. Use https:// unless you are deliberately testing on an isolated LAN."
+fi
+shopt -u nocasematch
 
 prompt HA_TOKEN "Long-lived access token (input hidden)" "" silent
 [[ -n "${HA_TOKEN}" ]] || die "token required"
