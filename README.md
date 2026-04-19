@@ -162,6 +162,11 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.2.0 - 2026-04-19
+- Blueprint: `notification_sound` input is now a dropdown with `Default`
+  and `None (silent)` presets; custom filenames remain possible via the
+  selector's `custom_value` field.
+
 ### 1.1.0 - 2026-04-19
 - Blueprint: replace free-text `notify_service` input with a device selector
   filtered to the `mobile_app` integration; the notify service is derived

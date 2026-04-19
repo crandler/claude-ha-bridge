@@ -41,10 +41,19 @@ blueprint:
         text:
     notification_sound:
       name: iOS notification sound (optional)
-      description: Leave empty for default. Use e.g. `US-EN-Morgan-Freeman-Helpful.wav`.
-      default: ""
+      description: >
+        Pick a preset or type a custom sound filename (e.g.
+        `US-EN-Morgan-Freeman-Helpful.wav`). Custom sounds must be placed
+        in the iOS Companion App's notification sounds folder.
+      default: default
       selector:
-        text:
+        select:
+          custom_value: true
+          options:
+            - label: Default
+              value: default
+            - label: None (silent)
+              value: none
 
 mode: parallel
 max: 10
