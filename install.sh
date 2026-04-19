@@ -46,6 +46,22 @@ prompt() {
 
 log "Repo: ${REPO_DIR}"
 
+# Pull latest if this is a git checkout ----------------------------------------
+# Makes install.sh double as the upgrader: `./install.sh` from the cloned
+# directory fetches new commits, re-renders the plist, reloads the daemon
+# and copies the latest blueprint to the clipboard -- one entry point.
+# Tarball installs (no .git) skip this silently.
+if [[ -d "${REPO_DIR}/.git" ]]; then
+  if command -v git >/dev/null 2>&1; then
+    log "Updating repo (git pull --ff-only)"
+    if ! (cd "${REPO_DIR}" && git pull --ff-only); then
+      warn "git pull --ff-only failed -- continuing with current working tree"
+    fi
+  else
+    warn "git not installed -- skipping repo update"
+  fi
+fi
+
 # Dependencies -----------------------------------------------------------------
 log "Checking dependencies"
 require python3
