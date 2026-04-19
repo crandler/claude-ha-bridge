@@ -10,8 +10,10 @@ No reverse SSH, no inbound ports -- the daemon connects outbound to HA.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import logging.handlers
 import os
 import re
 import signal
@@ -67,6 +69,11 @@ CLEANUP_INTERVAL_S = 30
 # right after a notification would race with it.
 PROMPT_GONE_GRACE_S = 15
 
+# Stop retrying auth after this many successive failures -- a wrong token
+# would otherwise let launchd throttle-loop the daemon forever and spam
+# HA's auth log. Counter resets on the first successful auth.
+AUTH_FAIL_LIMIT = 5
+
 # Matches numbered prompt options Claude renders, e.g. " 1. Yes" or
 # "> 1. Yes" when the Claude TUI highlights the selected row with a caret.
 _OPTION_LINE = re.compile(r"^\s*[>❯]?\s*(\d+)\.\s")
@@ -74,9 +81,13 @@ _OPTION_LINE = re.compile(r"^\s*[>❯]?\s*(\d+)\.\s")
 # How many lines to scan upward from the bottom of the pane when looking
 # for a prompt's option block. Claude renders the block at the very end,
 # so we don't need to go far -- but we allow a few non-matching lines
-# (cursor, input marker) between options without bailing.
-_PANE_SCAN_LINES = 15
+# (cursor, input marker) between options without bailing. 25 lines covers
+# long option titles that wrapped onto multiple terminal rows at 80 cols.
+_PANE_SCAN_LINES = 25
 _PANE_NONMATCH_TOLERANCE = 3
+# Claude's prompts currently max at 3 options. 9 is a defensive cap that
+# still excludes 2-digit numbered lists elsewhere in the pane.
+_PANE_MAX_PLAUSIBLE_OPTION = 9
 
 # Action prefixes the blueprint emits. Matching is explicit so tags
 # containing underscores never collide with the action name.
@@ -121,9 +132,9 @@ def detect_max_option(tmux_target: str) -> int | None:
             nonmatch_after_block += 1
             if nonmatch_after_block > _PANE_NONMATCH_TOLERANCE:
                 break
-    # Plausibility guard: Claude's prompts cap at 3 options. Anything
-    # larger is almost certainly an unrelated numbered list elsewhere.
-    if not options or max(options) > 5:
+    # Plausibility guard: rejects numbered lists longer than we'd ever
+    # see in a Claude prompt so unrelated enumerations cannot pose as one.
+    if not options or max(options) > _PANE_MAX_PLAUSIBLE_OPTION:
         return None
     return max(options)
 
@@ -390,15 +401,24 @@ async def run(cfg: dict[str, Any]) -> None:
         try:
             await _ws_loop(http, cfg, ws_url)
         finally:
+            # Cancel and await so aiohttp.ClientSession.__aexit__ does
+            # not close the transport while cleanup still has an HTTP
+            # request in flight -- otherwise a ResourceWarning leaks.
             cleanup_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cleanup_task
 
 
 async def _ws_loop(
     http: aiohttp.ClientSession, cfg: dict[str, Any], ws_url: str
 ) -> None:
     backoff = 2
-    msg_id = 1
+    auth_fails = 0
     while True:
+        # Per HA WebSocket API each message id must be monotonically
+        # increasing starting at 1 per connection, so we reset on every
+        # reconnect.
+        msg_id = 1
         try:
             _LOG.info("Connecting to %s", ws_url)
             async with http.ws_connect(ws_url, heartbeat=30) as ws:
@@ -410,8 +430,27 @@ async def _ws_loop(
                 await ws.send_json({"type": "auth", "access_token": cfg["ha_token"]})
                 auth_result = await ws.receive_json()
                 if auth_result.get("type") != "auth_ok":
-                    _LOG.error("Auth failed: %s", auth_result)
-                    raise SystemExit(1)
+                    auth_fails += 1
+                    _LOG.error(
+                        "Auth failed (%d/%d): %s",
+                        auth_fails, AUTH_FAIL_LIMIT, auth_result,
+                    )
+                    if auth_fails >= AUTH_FAIL_LIMIT:
+                        _LOG.error(
+                            "Giving up after %d auth failures -- check ha_token "
+                            "in %s and run 'launchctl kickstart' to retry",
+                            AUTH_FAIL_LIMIT, CONFIG_FILE,
+                        )
+                        raise SystemExit(1)
+                    # Give HA a moment before hammering again.
+                    await asyncio.sleep(min(2 * auth_fails, 30))
+                    continue
+
+                # Auth succeeded -- reset both counters immediately so a
+                # dropped connection right after auth does not keep the
+                # backoff elevated from the previous failure.
+                backoff = 2
+                auth_fails = 0
 
                 _LOG.info("Authenticated, subscribing to events")
                 subscribe_ok = True
@@ -435,13 +474,10 @@ async def _ws_loop(
                         break
                     _LOG.info("Subscribed to %s", event_type)
                 if not subscribe_ok:
-                    # Break out of the websocket context; outer while True
-                    # will reconnect with backoff.
                     await asyncio.sleep(backoff)
                     backoff = min(backoff * 2, 60)
                     continue
 
-                backoff = 2
                 async for msg in ws:
                     if msg.type != aiohttp.WSMsgType.TEXT:
                         continue
@@ -449,7 +485,7 @@ async def _ws_loop(
                     if payload.get("type") != "event":
                         continue
                     event = payload.get("event", {})
-                    _LOG.info(
+                    _LOG.debug(
                         "Event %s data=%s",
                         event.get("event_type"),
                         json.dumps(event.get("data", {}))[:400],
