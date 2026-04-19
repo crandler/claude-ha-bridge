@@ -169,6 +169,13 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.8.1 - 2026-04-19
+- Daemon: retract pushes as soon as the Claude prompt is no longer
+  visible in the tmux pane -- e.g. when you respond in the terminal
+  instead of on the phone. The 10-minute absolute age cutoff still
+  applies as a fallback. Cleanup interval tightened to 30s with a 15s
+  grace period after registration to avoid races with TUI render.
+
 ### 1.8.0 - 2026-04-19
 - Daemon: retract stale pushes from the phone. After a button press
   (successful tmux dispatch) the daemon calls

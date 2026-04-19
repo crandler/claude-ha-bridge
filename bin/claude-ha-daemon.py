@@ -44,12 +44,17 @@ _LOG = logging.getLogger("claude-ha-bridge")
 
 # Ignore button presses for sessions whose registration file is older than
 # this -- old notifications tapped much later should not inject keys into
-# whatever happens to run in the pane now. The same threshold is used by
-# the cleanup loop to retract stale pushes from the phone.
+# whatever happens to run in the pane now. The same threshold is the
+# unconditional time-based cutoff for the cleanup loop.
 SESSION_MAX_AGE_S = 600
 
-# How often the cleanup loop scans the sessions directory for stale entries.
-CLEANUP_INTERVAL_S = 60
+# How often the cleanup loop scans the sessions directory.
+CLEANUP_INTERVAL_S = 30
+
+# Minimum age before we trust "prompt no longer visible" as a signal. The
+# Claude Code UI can take a moment to render, so an immediate pane check
+# right after a notification would race with it.
+PROMPT_GONE_GRACE_S = 15
 
 # Matches numbered prompt options Claude renders, e.g. " 1. Yes".
 _OPTION_LINE = re.compile(r"^\s*(\d+)\.\s")
@@ -208,7 +213,14 @@ async def clear_notification(
 async def cleanup_stale_sessions(
     http: aiohttp.ClientSession, cfg: dict[str, Any]
 ) -> None:
-    """Retract phone notifications whose Claude prompt is no longer relevant."""
+    """Retract phone notifications whose Claude prompt is no longer relevant.
+
+    A session is considered stale when either
+    - the numbered prompt is no longer visible in the tmux pane (the user
+      responded via the console, or Claude moved on), or
+    - the session file is older than SESSION_MAX_AGE_S seconds
+      (fallback for panes we cannot inspect).
+    """
     while True:
         try:
             await asyncio.sleep(CLEANUP_INTERVAL_S)
@@ -216,11 +228,23 @@ async def cleanup_stale_sessions(
             for path in SESSIONS_DIR.glob("*.json"):
                 try:
                     age = now - path.stat().st_mtime
-                except OSError:
+                    session = json.loads(path.read_text())
+                except (OSError, json.JSONDecodeError):
                     continue
-                if age <= SESSION_MAX_AGE_S:
-                    continue
+
                 tag = path.stem
+                reason = None
+                if age > SESSION_MAX_AGE_S:
+                    reason = f"age={int(age)}s"
+                elif age > PROMPT_GONE_GRACE_S:
+                    target = session.get("tmux_target")
+                    if target and detect_max_option(target) is None:
+                        reason = "prompt no longer visible in pane"
+
+                if not reason:
+                    continue
+
+                _LOG.info("Retracting notification %s (%s)", tag, reason)
                 await clear_notification(http, cfg, tag)
                 try:
                     path.unlink()
