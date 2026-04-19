@@ -209,6 +209,12 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.1.7 - 2026-04-19
+- **Installer:** the silent-input branch of `prompt` ignored its
+  default argument, so the wizard kept asking for the long-lived token
+  on every re-run. Token prompt now offers "Enter to keep existing"
+  on upgrade and never echoes the stored value to the terminal.
+
 ### 2.1.6 - 2026-04-19
 - **Installer:** `install.sh` now self-updates -- runs
   `git pull --ff-only` as the first step when invoked from a git
