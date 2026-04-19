@@ -157,8 +157,22 @@ chmod 644 "${PLIST_DST}"
 if launchctl print "gui/${UID_NUM}/${LABEL}" >/dev/null 2>&1; then
   log "Unloading previous LaunchAgent instance"
   launchctl bootout "gui/${UID_NUM}/${LABEL}" || true
+  # bootout returns before launchd has fully retired the service. If we
+  # immediately bootstrap again, macOS replies with "Input/output
+  # error 5". Poll until the service is gone (or up to ~5s).
+  for _ in 1 2 3 4 5; do
+    launchctl print "gui/${UID_NUM}/${LABEL}" >/dev/null 2>&1 || break
+    sleep 1
+  done
 fi
-launchctl bootstrap "gui/${UID_NUM}" "${PLIST_DST}"
+# launchd's bootstrap can still race occasionally even after the wait.
+# Retry once after a short pause before giving up.
+if ! launchctl bootstrap "gui/${UID_NUM}" "${PLIST_DST}" 2>/dev/null; then
+  warn "bootstrap failed once -- retrying after 2s"
+  sleep 2
+  launchctl bootstrap "gui/${UID_NUM}" "${PLIST_DST}" \
+    || die "LaunchAgent bootstrap failed twice. Inspect: launchctl print gui/${UID_NUM}/${LABEL}"
+fi
 launchctl enable "gui/${UID_NUM}/${LABEL}" || true
 log "LaunchAgent loaded -- daemon running"
 
