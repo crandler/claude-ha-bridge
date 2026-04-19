@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import signal
 import subprocess
@@ -34,11 +35,21 @@ SESSIONS_DIR = CONFIG_DIR / "sessions"
 LOG_FILE = CONFIG_DIR / "daemon.log"
 
 # launchd redirects stderr into daemon.log too, so a StreamHandler on
-# stderr would duplicate every line. File handler only.
+# stderr would duplicate every line. File handler only. Restrict the log
+# file permissions (and any other files we open from here on) to the
+# current user -- the log contains session ids, pane targets, HA event
+# payloads, and must not be world-readable on shared macOS accounts.
+os.umask(0o077)
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+_LOG_HANDLER = logging.FileHandler(LOG_FILE)
+try:
+    os.chmod(LOG_FILE, 0o600)
+except OSError:
+    pass
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[logging.FileHandler(LOG_FILE)],
+    handlers=[_LOG_HANDLER],
 )
 _LOG = logging.getLogger("claude-ha-bridge")
 
@@ -70,6 +81,23 @@ _PANE_NONMATCH_TOLERANCE = 3
 # Action prefixes the blueprint emits. Matching is explicit so tags
 # containing underscores never collide with the action name.
 KNOWN_ACTIONS = ("approve", "allowalways", "deny", "stop")
+
+# Routing tags are used to pick a session file -- hard-limit the character
+# set to defuse path traversal and surprising filenames coming in via HA.
+_VALID_TAG = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def _session_path(tag: str) -> Path | None:
+    """Return the session-file path for a tag, refusing to escape SESSIONS_DIR."""
+    if not _VALID_TAG.match(tag):
+        return None
+    path = SESSIONS_DIR / f"{tag}.json"
+    try:
+        resolved = path.resolve(strict=False)
+        resolved.relative_to(SESSIONS_DIR.resolve())
+    except (OSError, ValueError):
+        return None
+    return resolved
 
 
 def detect_max_option(tmux_target: str) -> int | None:
@@ -153,7 +181,10 @@ def load_config() -> dict[str, Any]:
 
 def load_session(tag: str) -> dict[str, Any] | None:
     """Load tmux target for a Claude session tag, ignoring stale entries."""
-    path = SESSIONS_DIR / f"{tag}.json"
+    path = _session_path(tag)
+    if path is None:
+        _LOG.warning("Rejecting invalid tag %r", tag)
+        return None
     if not path.exists():
         return None
     age = time.time() - path.stat().st_mtime
@@ -327,12 +358,15 @@ async def handle_action_event(
         action, max_option, tag, target,
     )
     if dispatch_to_tmux(session, keys) and http is not None:
-        # Button was handled -- retract the push from the phone.
+        # Button was handled -- retract the push from the phone and
+        # invalidate the session so a replayed event cannot re-dispatch.
         await clear_notification(http, cfg, tag)
-        try:
-            (SESSIONS_DIR / f"{tag}.json").unlink()
-        except OSError:
-            pass
+        session_path = _session_path(tag)
+        if session_path is not None:
+            try:
+                session_path.unlink()
+            except OSError:
+                pass
 
 
 def _derive_ws_url(ha_url: str) -> str:

@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+# Keep every file we create restricted to the current user -- session
+# files and the debug log contain paths, session ids and prompt text.
+umask 077
+
 CONFIG_DIR="${HOME}/.config/claude-ha-bridge"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 SESSIONS_DIR="${CONFIG_DIR}/sessions"
@@ -44,6 +48,8 @@ mkdir -p "$CONFIG_DIR"
   echo "$PAYLOAD"
   echo
 } >> "$NOTIFY_LOG" 2>/dev/null || true
+# Belt-and-braces: enforce 600 even if the file was created pre-umask.
+chmod 600 "$NOTIFY_LOG" 2>/dev/null || true
 
 # Tag must be non-empty and stable for routing -- use session_id if available,
 # otherwise fall back to the project path hash.
