@@ -82,22 +82,10 @@ _PANE_NONMATCH_TOLERANCE = 3
 # containing underscores never collide with the action name.
 KNOWN_ACTIONS = ("approve", "allowalways", "deny", "stop")
 
-# Routing tags are used to pick a session file -- hard-limit the character
-# set to defuse path traversal and surprising filenames coming in via HA.
-_VALID_TAG = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
-
-def _session_path(tag: str) -> Path | None:
-    """Return the session-file path for a tag, refusing to escape SESSIONS_DIR."""
-    if not _VALID_TAG.match(tag):
-        return None
-    path = SESSIONS_DIR / f"{tag}.json"
-    try:
-        resolved = path.resolve(strict=False)
-        resolved.relative_to(SESSIONS_DIR.resolve())
-    except (OSError, ValueError):
-        return None
-    return resolved
+# One-shot auth token carried by each action button. Must match what
+# `notify.sh` wrote into the session file exactly: 32 hex characters,
+# generated via `openssl rand -hex 16`.
+_VALID_TOKEN = re.compile(r"^[a-f0-9]{32}$")
 
 
 def detect_max_option(tmux_target: str) -> int | None:
@@ -179,24 +167,27 @@ def load_config() -> dict[str, Any]:
     return cfg
 
 
-def load_session(tag: str) -> dict[str, Any] | None:
-    """Load tmux target for a Claude session tag, ignoring stale entries."""
-    path = _session_path(tag)
-    if path is None:
-        _LOG.warning("Rejecting invalid tag %r", tag)
+def find_session_by_token(token: str) -> tuple[Path, dict[str, Any]] | None:
+    """Return the (path, session) pair whose stored token matches.
+
+    Scans SESSIONS_DIR -- typically 0-2 files at a time. An unknown token
+    (from a replayed or forged event) returns None and the daemon drops
+    the action silently.
+    """
+    if not _VALID_TOKEN.match(token):
         return None
-    if not path.exists():
-        return None
-    age = time.time() - path.stat().st_mtime
-    if age > SESSION_MAX_AGE_S:
-        _LOG.info("Session %s stale (age=%ds), ignoring", tag, int(age))
-        return None
-    try:
-        with path.open() as f:
-            return json.load(f)
-    except (OSError, json.JSONDecodeError) as err:
-        _LOG.warning("Failed to read session %s: %s", tag, err)
-        return None
+    for path in SESSIONS_DIR.glob("*.json"):
+        try:
+            age = time.time() - path.stat().st_mtime
+            if age > SESSION_MAX_AGE_S:
+                continue
+            with path.open() as f:
+                session = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if session.get("token") == token:
+            return path, session
+    return None
 
 
 def dispatch_to_tmux(session: dict[str, Any], keys: str) -> bool:
@@ -320,31 +311,30 @@ async def handle_action_event(
     `ios.action_fired`. Payload shape differs slightly -- we normalise both.
     """
     data = event.get("data", {})
-    # mobile_app: {"action": "...", "tag": "..."}
-    # ios.action_fired: {"actionName": "...", "action_data": {"tag": "..."}}
     action = data.get("action") or data.get("actionName")
-    tag = data.get("tag")
-    if not tag:
-        action_data = data.get("action_data") or {}
-        if isinstance(action_data, dict):
-            tag = action_data.get("tag")
-    # iOS Companion strips per-action custom data, so the blueprint encodes
-    # the tag into the action name as `<name>_<tag>`. Strip a known prefix
-    # off the action so tags containing underscores remain intact.
-    if action and not tag:
+    # iOS Companion strips per-action custom data, so the blueprint
+    # encodes the one-shot token into the action name as `<known>_<token>`.
+    # Split the prefix off so tokens are matched exactly, not by loose
+    # string contains checks.
+    token = None
+    if action:
         for known in KNOWN_ACTIONS:
             prefix = f"{known}_"
             if action.startswith(prefix):
-                tag = action[len(prefix):]
+                token = action[len(prefix):]
                 action = known
                 break
-    if not action or action not in KNOWN_ACTIONS or not tag:
+    if not action or action not in KNOWN_ACTIONS or not token:
         return
 
-    session = load_session(tag)
-    if session is None:
-        _LOG.debug("No session registered for tag %r", tag)
+    found = find_session_by_token(token)
+    if found is None:
+        # Unknown / stale / replayed token -- the only defence the daemon
+        # has against spoofed button events.
+        _LOG.info("Dropping action %s: token did not match any session", action)
         return
+    session_path, session = found
+    tag = session_path.stem
 
     target = session.get("tmux_target")
     max_option = detect_max_option(target) if target else None
@@ -359,14 +349,13 @@ async def handle_action_event(
     )
     if dispatch_to_tmux(session, keys) and http is not None:
         # Button was handled -- retract the push from the phone and
-        # invalidate the session so a replayed event cannot re-dispatch.
+        # delete the session file so the token burns with it. A replayed
+        # event with the same token will find no match.
         await clear_notification(http, cfg, tag)
-        session_path = _session_path(tag)
-        if session_path is not None:
-            try:
-                session_path.unlink()
-            except OSError:
-                pass
+        try:
+            session_path.unlink()
+        except OSError:
+            pass
 
 
 def _derive_ws_url(ha_url: str) -> str:

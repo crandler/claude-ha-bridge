@@ -51,10 +51,21 @@ mkdir -p "$CONFIG_DIR"
 # Belt-and-braces: enforce 600 even if the file was created pre-umask.
 chmod 600 "$NOTIFY_LOG" 2>/dev/null || true
 
-# Tag must be non-empty and stable for routing -- use session_id if available,
-# otherwise fall back to the project path hash.
+# Tag is stable per Claude session and used for iOS push grouping only --
+# NOT for authorising button presses. Falls back to a project path hash
+# when Claude did not provide a session_id.
 PROJECT=$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")
-TAG="${SESSION_ID:-$(echo "$PROJECT" | shasum | cut -c1-12)}"
+# Hash the full project dir so two projects with the same basename do not
+# collide. SHA-1 is fine here: we only need collision-resistance for
+# routing, not crypto strength.
+TAG="${SESSION_ID:-$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | shasum | cut -c1-12)}"
+
+# Generate a fresh one-shot token for this notification. The token is the
+# only thing the daemon trusts to authorise a button press: it is stored
+# in the session file below and must match bit-for-bit on the resulting
+# mobile_app_notification_action event. Any replay or forged event with
+# an unknown token is silently dropped.
+TOKEN=$(openssl rand -hex 16)
 
 # Register tmux target if we're in tmux -- daemon reads this when a button
 # action arrives.
@@ -68,8 +79,12 @@ if [[ -n "${TMUX:-}" ]]; then
       --arg session "$TMUX_SESSION" \
       --arg project "$PROJECT" \
       --arg cwd "${CLAUDE_PROJECT_DIR:-$PWD}" \
-      '{tmux_target: $target, tmux_session: $session, project: $project, cwd: $cwd}' \
+      --arg token "$TOKEN" \
+      --arg session_id "$SESSION_ID" \
+      '{tmux_target: $target, tmux_session: $session, project: $project,
+        cwd: $cwd, token: $token, session_id: $session_id}' \
       > "${SESSIONS_DIR}/${TAG}.json"
+    chmod 600 "${SESSIONS_DIR}/${TAG}.json" 2>/dev/null || true
   fi
 fi
 
@@ -112,6 +127,7 @@ curl -fsS -m 5 -X POST "${HA_URL%/}/api/webhook/${WEBHOOK_ID}" \
         --arg title "$TITLE" \
         --arg message "$BODY" \
         --arg tag "$TAG" \
+        --arg token "$TOKEN" \
         --arg event "$EVENT" \
-        '{title: $title, message: $message, tag: $tag, event: $event}')" \
+        '{title: $title, message: $message, tag: $tag, token: $token, event: $event}')" \
   >/dev/null 2>&1 || true
