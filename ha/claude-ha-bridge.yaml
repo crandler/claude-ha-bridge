@@ -89,6 +89,16 @@ blueprint:
       default: "https://claude.ai/code"
       selector:
         text:
+    help_message:
+      name: Help-needed message body
+      description: >
+        Body shown for non-permission notifications (idle prompt,
+        inline question, anything where Claude is just waiting on
+        you). Permission-prompt pushes keep their original tool-call
+        body so you can see what Claude wants to do.
+      default: "Claude benötigt Deine Unterstützung"
+      selector:
+        text:
     notification_sound:
       name: iOS notification sound (optional)
       description: >
@@ -387,6 +397,10 @@ variables:
   # to the session that registered it -- replayed or forged button
   # events carry an unknown token and get dropped.
   notification_token: "{{ trigger.json.token | default('', true) }}"
+  # Notification type from the Claude Code hook: `permission_prompt` for
+  # tool-permission requests (full action button set), anything else for
+  # generic "Claude needs help" pushes (only Stop button).
+  notif_type: "{{ trigger.json.notification_type | default('', true) }}"
   mode_entity_id: !input mode_entity
   presence_entity_id: !input presence_entity
   notify_mode: >-
@@ -400,28 +414,52 @@ action:
     value_template: >-
       {{ notify_mode != 'off'
          and not (notify_mode == 'auto' and presence_state == 'home') }}
-  - action: "{{ notify_service }}"
-    data:
-      title: "{{ trigger.json.title | default('Claude', true) }}"
-      message: "{{ trigger.json.message | default('', true) }}"
-      data:
-        tag: "{{ notification_tag }}"
-        group: claude-ha-bridge
-        url: !input tap_url
-        push:
-          sound: "{{ push_sound if push_sound else 'default' }}"
-          interruption-level: time-sensitive
-        actions:
-          - action: "approve_{{ notification_token }}"
-            title: !input approve_label
-            authenticationRequired: false
-          - action: "allowalways_{{ notification_token }}"
-            title: !input allow_always_label
-            authenticationRequired: false
-          - action: "deny_{{ notification_token }}"
-            title: !input deny_label
-            authenticationRequired: false
-          - action: "stop_{{ notification_token }}"
-            title: !input stop_label
-            destructive: true
-            authenticationRequired: false
+  - choose:
+      - alias: "Permission prompt -- full Approve/Always/Deny/Stop button set"
+        conditions:
+          - condition: template
+            value_template: "{{ notif_type == 'permission_prompt' }}"
+        sequence:
+          - action: "{{ notify_service }}"
+            data:
+              title: "{{ trigger.json.title | default('Claude', true) }}"
+              message: "{{ trigger.json.message | default('', true) }}"
+              data:
+                tag: "{{ notification_tag }}"
+                group: claude-ha-bridge
+                url: !input tap_url
+                push:
+                  sound: "{{ push_sound if push_sound else 'default' }}"
+                  interruption-level: time-sensitive
+                actions:
+                  - action: "approve_{{ notification_token }}"
+                    title: !input approve_label
+                    authenticationRequired: false
+                  - action: "allowalways_{{ notification_token }}"
+                    title: !input allow_always_label
+                    authenticationRequired: false
+                  - action: "deny_{{ notification_token }}"
+                    title: !input deny_label
+                    authenticationRequired: false
+                  - action: "stop_{{ notification_token }}"
+                    title: !input stop_label
+                    destructive: true
+                    authenticationRequired: false
+    default:
+      - alias: "Anything else (idle/inline/etc.) -- generic help-needed push, Stop only"
+        action: "{{ notify_service }}"
+        data:
+          title: "{{ trigger.json.title | default('Claude', true) }}"
+          message: !input help_message
+          data:
+            tag: "{{ notification_tag }}"
+            group: claude-ha-bridge
+            url: !input tap_url
+            push:
+              sound: "{{ push_sound if push_sound else 'default' }}"
+              interruption-level: time-sensitive
+            actions:
+              - action: "stop_{{ notification_token }}"
+                title: !input stop_label
+                destructive: true
+                authenticationRequired: false
