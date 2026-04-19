@@ -83,10 +83,14 @@ blueprint:
       description: >
         URL opened when the user taps the notification (instead of
         long-pressing for the action buttons). Default is the Claude
-        iOS app via Universal Link, so a tap takes you straight to
-        Remote Control's Code view. Leave empty to keep the iOS
-        Companion App default (open HA).
-      default: "https://claude.ai/code"
+        iOS app's custom URL scheme (`claude://`), which opens the
+        native app directly instead of an in-app WebView. iOS will
+        prompt once per app pair to confirm cross-app launching --
+        choose "Always Allow" if offered. Alternative:
+        `https://claude.ai/code` (Universal Link, no prompt but lands
+        in a WebView). Leave empty to keep the iOS Companion App
+        default (open HA).
+      default: "claude://"
       selector:
         text:
     help_message:
