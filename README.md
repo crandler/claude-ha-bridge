@@ -219,6 +219,15 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.1.5 - 2026-04-19
+- **Installer:** wizard re-runs now merge into the existing
+  `config.json` instead of overwriting it. Optional fields a power
+  user added by hand (`mobile_app_service`, per-button `actions`
+  overrides) survive an upgrade. Atomic write via `mktemp + mv`.
+- **Docs:** new README "Upgrade" section spelling out git pull +
+  install.sh + blueprint re-import, including the manual *Save* step
+  on the HA automation when new blueprint inputs were added.
+
 ### 2.1.4 - 2026-04-19
 - **UX:** `tap_url` default switched from the `https://claude.ai/code`
   Universal Link to the `claude://` custom URL scheme. The Universal
