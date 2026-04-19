@@ -78,6 +78,17 @@ blueprint:
       default: Stoppen
       selector:
         text:
+    tap_url:
+      name: Tap URL (optional)
+      description: >
+        URL opened when the user taps the notification (instead of
+        long-pressing for the action buttons). Default is the Claude
+        iOS app via Universal Link, so a tap takes you straight to
+        Remote Control's Code view. Leave empty to keep the iOS
+        Companion App default (open HA).
+      default: "https://claude.ai/code"
+      selector:
+        text:
     notification_sound:
       name: iOS notification sound (optional)
       description: >
@@ -396,6 +407,7 @@ action:
       data:
         tag: "{{ notification_tag }}"
         group: claude-ha-bridge
+        url: !input tap_url
         push:
           sound: "{{ push_sound if push_sound else 'default' }}"
           interruption-level: time-sensitive
