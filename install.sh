@@ -88,10 +88,12 @@ log "Installing aiohttp in venv"
 # Config prompts ---------------------------------------------------------------
 existing_ha_url=""
 existing_webhook=""
+existing_ha_token=""
 if [[ -f "${CONFIG_FILE}" ]]; then
   log "Existing config found, re-using values as defaults"
   existing_ha_url=$(jq -r '.ha_url // ""' "${CONFIG_FILE}")
   existing_webhook=$(jq -r '.webhook_id // ""' "${CONFIG_FILE}")
+  existing_ha_token=$(jq -r '.ha_token // ""' "${CONFIG_FILE}")
 fi
 
 prompt HA_URL "Home Assistant URL (e.g. https://ha.example.com)" "${existing_ha_url}"
@@ -102,7 +104,15 @@ if [[ "${HA_URL}" =~ ^http:// ]]; then
 fi
 shopt -u nocasematch
 
-prompt HA_TOKEN "Long-lived access token (input hidden)" "" silent
+# Token prompt: keep silent input but support "Enter to keep existing"
+# on upgrade. Never echo the existing token to the terminal.
+if [[ -n "${existing_ha_token}" ]]; then
+  read -r -s -p "Long-lived access token (input hidden, Enter to keep existing): " HA_TOKEN
+  echo
+  HA_TOKEN="${HA_TOKEN:-${existing_ha_token}}"
+else
+  prompt HA_TOKEN "Long-lived access token (input hidden)" "" silent
+fi
 [[ -n "${HA_TOKEN}" ]] || die "token required"
 
 if [[ -n "${existing_webhook}" ]]; then
