@@ -14,6 +14,7 @@ set -euo pipefail
 CONFIG_DIR="${HOME}/.config/claude-ha-bridge"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 SESSIONS_DIR="${CONFIG_DIR}/sessions"
+NOTIFY_LOG="${CONFIG_DIR}/notify.log"
 
 [[ -f "$CONFIG_FILE" ]] || {
   echo "claude-ha-bridge: config missing, skipping notify" >&2
@@ -32,6 +33,15 @@ PAYLOAD=$(cat 2>/dev/null || true)
 SESSION_ID=$(echo "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null || true)
 EVENT=$(echo "$PAYLOAD" | jq -r '.hook_event_name // "notification"' 2>/dev/null || echo "notification")
 MESSAGE=$(echo "$PAYLOAD" | jq -r '.message // .notification.message // empty' 2>/dev/null || true)
+
+# Dump payload for debugging -- lets us evolve title/body once we see what
+# Claude actually sends for permission/idle prompts.
+mkdir -p "$CONFIG_DIR"
+{
+  printf '%s --- %s\n' "$(date -u +%FT%TZ)" "$EVENT"
+  echo "$PAYLOAD"
+  echo
+} >> "$NOTIFY_LOG" 2>/dev/null || true
 
 # Tag must be non-empty and stable for routing -- use session_id if available,
 # otherwise fall back to the project path hash.
@@ -55,7 +65,12 @@ if [[ -n "${TMUX:-}" ]]; then
   fi
 fi
 
-TITLE="Claude: ${PROJECT}"
+# Short session identifier so parallel Claude sessions are distinguishable
+# on the lock screen ("Claude - project - ab12cd").
+SHORT_ID="${SESSION_ID:0:6}"
+[[ -n "$SHORT_ID" ]] || SHORT_ID=$(echo "$PROJECT" | shasum | cut -c1-6)
+
+TITLE="Claude - ${PROJECT} - ${SHORT_ID}"
 BODY="${MESSAGE:-${EVENT}}"
 
 # Fire webhook; HA blueprint picks it up and pushes the actionable notification.

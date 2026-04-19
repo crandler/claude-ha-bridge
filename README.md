@@ -162,6 +162,13 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.4.0 - 2026-04-19
+- `notify.sh`: include a short session id in the push title so parallel
+  Claude sessions are distinguishable (`Claude - project - ab12cd`).
+- `notify.sh`: append the full hook payload to
+  `~/.config/claude-ha-bridge/notify.log` for debugging. Contains session
+  ids and project paths -- not shared externally, safe to keep local only.
+
 ### 1.3.0 - 2026-04-19
 - Blueprint: add all 127 notification sounds shipped with the iOS
   Companion App (Alexa, Daisy, Morgan Freeman voice packs) as dropdown
