@@ -51,6 +51,7 @@ bin/claude-ha-daemon.py              # WebSocket listener, dispatches to tmux
 hooks/notify.sh                      # Claude Code Notification hook
 ha/claude-ha-bridge.yaml             # Home Assistant Blueprint
 launchd/com.crandler.claude-ha-bridge.plist  # LaunchAgent template
+bootstrap.sh                         # one-liner: clone/update + install.sh
 install.sh                           # interactive installer wizard
 ```
 
@@ -64,7 +65,17 @@ install.sh                           # interactive installer wizard
 
 ## Install / Upgrade
 
-Same one-liner for both. Clone wherever you like:
+One-liner (install and upgrade use the same command):
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/crandler/claude-ha-bridge/main/bootstrap.sh)"
+```
+
+The bootstrap clones the repo to `~/.claude-ha-bridge` (override with
+`CLAUDE_HA_BRIDGE_DIR=/some/path`) and runs the installer.
+Re-running the same command `git pull`s and re-invokes `install.sh`.
+
+Prefer your own checkout location? Clone and run the installer manually:
 
 ```bash
 git clone https://github.com/crandler/claude-ha-bridge.git
