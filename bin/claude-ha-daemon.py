@@ -16,6 +16,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -32,13 +33,12 @@ CONFIG_FILE = CONFIG_DIR / "config.json"
 SESSIONS_DIR = CONFIG_DIR / "sessions"
 LOG_FILE = CONFIG_DIR / "daemon.log"
 
+# launchd redirects stderr into daemon.log too, so a StreamHandler on
+# stderr would duplicate every line. File handler only.
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
-    handlers=[
-        logging.FileHandler(LOG_FILE),
-        logging.StreamHandler(sys.stderr),
-    ],
+    handlers=[logging.FileHandler(LOG_FILE)],
 )
 _LOG = logging.getLogger("claude-ha-bridge")
 
@@ -48,6 +48,11 @@ DEFAULT_ACTIONS = {
     "deny": "2\n",
     "stop": "\x03",  # Ctrl-C
 }
+
+# Ignore button presses for sessions whose registration file is older than
+# this -- old notifications tapped much later should not inject keys into
+# whatever happens to run in the pane now.
+SESSION_MAX_AGE_S = 600
 
 
 def load_config() -> dict[str, Any]:
@@ -66,9 +71,13 @@ def load_config() -> dict[str, Any]:
 
 
 def load_session(tag: str) -> dict[str, Any] | None:
-    """Load tmux target for a Claude session tag."""
+    """Load tmux target for a Claude session tag, ignoring stale entries."""
     path = SESSIONS_DIR / f"{tag}.json"
     if not path.exists():
+        return None
+    age = time.time() - path.stat().st_mtime
+    if age > SESSION_MAX_AGE_S:
+        _LOG.info("Session %s stale (age=%ds), ignoring", tag, int(age))
         return None
     try:
         with path.open() as f:

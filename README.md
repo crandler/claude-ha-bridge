@@ -162,6 +162,14 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.5.1 - 2026-04-19
+- Daemon: drop the stderr StreamHandler. launchd already redirects
+  stderr into `daemon.log`, so the extra handler caused every log line
+  to appear twice.
+- Daemon: ignore button presses for sessions whose registration is
+  older than 10 minutes, so late taps on stale notifications do not
+  inject keys into whatever pane is active now.
+
 ### 1.5.0 - 2026-04-19
 - Blueprint + daemon: encode the routing tag into the action name itself
   (`approve_<tag>`). iOS Companion App does not reflect per-action
