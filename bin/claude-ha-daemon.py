@@ -384,6 +384,28 @@ async def handle_action_event(
         _LOG.debug("Unknown action %r, skipping", action)
         return
 
+    # Race guard: re-check the pane right before dispatching. If Claude
+    # already moved on (user answered in the console, prompt timed out,
+    # session exited) we would be injecting keys into an unrelated shell
+    # prompt. For the `stop` action we always send Ctrl-C regardless --
+    # it is always safe to send and is the whole point of that button.
+    if action != "stop":
+        live_option = detect_max_option(target) if target else None
+        if live_option is None:
+            _LOG.info(
+                "Skipping %s for session %s: prompt no longer visible",
+                action, tag,
+            )
+            # Clear the phone notification and drop the session so a
+            # repeated tap does nothing.
+            if http is not None:
+                await clear_notification(http, cfg, tag)
+            try:
+                session_path.unlink()
+            except OSError:
+                pass
+            return
+
     _LOG.info(
         "Action %s (max_option=%s) -> session %s (%s)",
         action, max_option, tag, target,
