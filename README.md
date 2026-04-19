@@ -162,6 +162,12 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.4.2 - 2026-04-19
+- Blueprint: remove the version suffix from the blueprint name. A
+  changing name caused HA to treat each re-import as a separate
+  blueprint instead of overwriting the existing one. The version
+  remains visible in the description.
+
 ### 1.4.1 - 2026-04-19
 - Blueprint: attach the notification `tag` to each actionable button's
   own `data` payload. iOS strips top-level tag from the action event, so
