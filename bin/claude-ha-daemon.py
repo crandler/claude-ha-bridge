@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import signal
 import subprocess
 import sys
@@ -41,17 +42,67 @@ logging.basicConfig(
 )
 _LOG = logging.getLogger("claude-ha-bridge")
 
-# Map action identifier -> keys sent to tmux pane
-DEFAULT_ACTIONS = {
-    "approve": "1\n",
-    "deny": "2\n",
-    "stop": "\x03",  # Ctrl-C
-}
-
 # Ignore button presses for sessions whose registration file is older than
 # this -- old notifications tapped much later should not inject keys into
 # whatever happens to run in the pane now.
 SESSION_MAX_AGE_S = 600
+
+# Matches numbered prompt options Claude renders, e.g. " 1. Yes".
+_OPTION_LINE = re.compile(r"^\s*(\d+)\.\s")
+
+
+def detect_max_option(tmux_target: str) -> int | None:
+    """Read the Claude pane and return the highest visible option number.
+
+    Handles both the 2-option prompt (Yes/No) and the 3-option prompt
+    (Yes / Yes-and-don't-ask-again / No). Returns None if no numbered
+    block is visible.
+    """
+    try:
+        out = subprocess.run(
+            ["tmux", "capture-pane", "-p", "-t", tmux_target],
+            check=True,
+            timeout=5,
+            capture_output=True,
+            text=True,
+        ).stdout
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as err:
+        _LOG.warning("capture-pane failed for %s: %s", tmux_target, err)
+        return None
+
+    # Scan from the bottom for the last contiguous block of "N. ..." lines.
+    options: list[int] = []
+    for line in reversed(out.splitlines()[-40:]):
+        m = _OPTION_LINE.match(line)
+        if m:
+            options.append(int(m.group(1)))
+        elif options:
+            break
+    return max(options) if options else None
+
+
+def resolve_keys(action: str, max_option: int | None, overrides: dict[str, str]) -> str | None:
+    """Pick the key sequence to send for a button, given the live prompt shape.
+
+    Overrides from `config.json` take precedence so power users can remap
+    any button to a literal key string. Otherwise:
+    - approve      -> option 1
+    - allowalways  -> option 2 (only if 3+ options; falls back to option 1)
+    - deny         -> last option (2 or 3)
+    - stop         -> Ctrl-C
+    """
+    if action in overrides:
+        return overrides[action]
+    mo = max_option or 2
+    if action == "approve":
+        return "1\n"
+    if action == "allowalways":
+        return "2\n" if mo >= 3 else "1\n"
+    if action == "deny":
+        return f"{mo}\n"
+    if action == "stop":
+        return "\x03"
+    return None
 
 
 def load_config() -> dict[str, Any]:
@@ -65,7 +116,7 @@ def load_config() -> dict[str, Any]:
     for key in ("ha_url", "ha_token"):
         if not cfg.get(key):
             raise SystemExit(f"Config field '{key}' missing in {CONFIG_FILE}")
-    cfg.setdefault("actions", DEFAULT_ACTIONS)
+    cfg.setdefault("actions", {})
     return cfg
 
 
@@ -127,18 +178,22 @@ async def handle_action_event(cfg: dict[str, Any], event: dict[str, Any]) -> Non
     if not action or not tag:
         return
 
-    # Only act on actions we know -- ignore unrelated mobile_app notifications
-    keys = cfg["actions"].get(action)
-    if keys is None:
-        _LOG.debug("Unknown action %r, skipping", action)
-        return
-
     session = load_session(tag)
     if session is None:
         _LOG.debug("No session registered for tag %r", tag)
         return
 
-    _LOG.info("Action %s -> session %s (%s)", action, tag, session.get("tmux_target"))
+    target = session.get("tmux_target")
+    max_option = detect_max_option(target) if target else None
+    keys = resolve_keys(action, max_option, cfg["actions"])
+    if keys is None:
+        _LOG.debug("Unknown action %r, skipping", action)
+        return
+
+    _LOG.info(
+        "Action %s (max_option=%s) -> session %s (%s)",
+        action, max_option, tag, target,
+    )
     dispatch_to_tmux(session, keys)
 
 

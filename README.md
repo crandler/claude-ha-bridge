@@ -162,6 +162,15 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.6.0 - 2026-04-19
+- Blueprint: add fourth button `Immer erlauben` (allow-always) so the
+  full Claude 3-option permission prompt is addressable.
+- Daemon: resolve button -> keys dynamically. `tmux capture-pane` is
+  inspected to find the highest numbered option currently on screen;
+  `deny` then sends `2` or `3` depending on the prompt shape, and
+  `allowalways` falls back to `approve` when only two options exist.
+  `config.json "actions": {...}` still overrides individual buttons.
+
 ### 1.5.2 - 2026-04-19
 - Daemon: shut down cleanly on SIGINT/SIGTERM via `task.cancel()` instead
   of `loop.stop()`. The latter raised

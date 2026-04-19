@@ -1,7 +1,7 @@
 blueprint:
   name: Claude HA Bridge - Actionable Notifications
   description: >
-    Blueprint version: 1.5.1.
+    Blueprint version: 1.6.0.
     Receives webhooks from the Claude HA Bridge daemon on a Mac and pushes
     actionable notifications to a mobile device. Button taps become
     `mobile_app_notification_action` events, which the Mac daemon routes
@@ -28,6 +28,14 @@ blueprint:
     approve_label:
       name: Approve button label
       default: Erlauben
+      selector:
+        text:
+    allow_always_label:
+      name: Allow-always button label
+      description: >
+        Sent as Claude's "Yes, and don't ask again" option when present.
+        At 2-option prompts the daemon falls back to a plain Yes.
+      default: Immer erlauben
       selector:
         text:
     deny_label:
@@ -341,6 +349,9 @@ action:
         actions:
           - action: "approve_{{ notification_tag }}"
             title: !input approve_label
+            authenticationRequired: false
+          - action: "allowalways_{{ notification_tag }}"
+            title: !input allow_always_label
             authenticationRequired: false
           - action: "deny_{{ notification_tag }}"
             title: !input deny_label
