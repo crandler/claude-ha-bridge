@@ -209,6 +209,12 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.1.8 - 2026-04-19
+- **Installer:** wait for `launchctl bootout` to fully retire the
+  service before re-bootstrapping, and retry bootstrap once after 2s
+  on a transient `Input/output error 5`. Resolves the wizard
+  occasionally leaving the daemon down on upgrade.
+
 ### 2.1.7 - 2026-04-19
 - **Installer:** the silent-input branch of `prompt` ignored its
   default argument, so the wizard kept asking for the long-lived token
