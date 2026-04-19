@@ -98,10 +98,20 @@ def dispatch_to_tmux(session: dict[str, Any], keys: str) -> bool:
 
 
 async def handle_action_event(cfg: dict[str, Any], event: dict[str, Any]) -> None:
-    """Process one mobile_app_notification_action event from HA."""
+    """Process one actionable-notification event from HA.
+
+    Android/cross-platform fires `mobile_app_notification_action`, iOS fires
+    `ios.action_fired`. Payload shape differs slightly -- we normalise both.
+    """
     data = event.get("data", {})
-    action = data.get("action")
+    # mobile_app: {"action": "...", "tag": "..."}
+    # ios.action_fired: {"actionName": "...", "action_data": {"tag": "..."}}
+    action = data.get("action") or data.get("actionName")
     tag = data.get("tag")
+    if not tag:
+        action_data = data.get("action_data") or {}
+        if isinstance(action_data, dict):
+            tag = action_data.get("tag")
     if not action or not tag:
         return
 
@@ -143,16 +153,23 @@ async def run(cfg: dict[str, Any]) -> None:
                         raise SystemExit(1)
 
                     _LOG.info("Authenticated, subscribing to events")
-                    await ws.send_json({
-                        "id": msg_id,
-                        "type": "subscribe_events",
-                        "event_type": "mobile_app_notification_action",
-                    })
-                    msg_id += 1
-                    sub_result = await ws.receive_json()
-                    if not sub_result.get("success"):
-                        _LOG.error("Subscribe failed: %s", sub_result)
-                        continue
+                    for event_type in (
+                        "mobile_app_notification_action",
+                        "ios.action_fired",
+                    ):
+                        await ws.send_json({
+                            "id": msg_id,
+                            "type": "subscribe_events",
+                            "event_type": event_type,
+                        })
+                        msg_id += 1
+                        sub_result = await ws.receive_json()
+                        if not sub_result.get("success"):
+                            _LOG.error(
+                                "Subscribe %s failed: %s", event_type, sub_result
+                            )
+                            continue
+                        _LOG.info("Subscribed to %s", event_type)
 
                     backoff = 2
                     async for msg in ws:
