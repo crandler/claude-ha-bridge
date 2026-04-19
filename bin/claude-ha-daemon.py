@@ -162,6 +162,11 @@ async def run(cfg: dict[str, Any]) -> None:
                         if payload.get("type") != "event":
                             continue
                         event = payload.get("event", {})
+                        _LOG.info(
+                            "Event %s data=%s",
+                            event.get("event_type"),
+                            json.dumps(event.get("data", {}))[:400],
+                        )
                         await handle_action_event(cfg, event)
 
             except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError) as err:

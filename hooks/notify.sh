@@ -33,6 +33,8 @@ PAYLOAD=$(cat 2>/dev/null || true)
 SESSION_ID=$(echo "$PAYLOAD" | jq -r '.session_id // empty' 2>/dev/null || true)
 EVENT=$(echo "$PAYLOAD" | jq -r '.hook_event_name // "notification"' 2>/dev/null || echo "notification")
 MESSAGE=$(echo "$PAYLOAD" | jq -r '.message // .notification.message // empty' 2>/dev/null || true)
+NOTIF_TYPE=$(echo "$PAYLOAD" | jq -r '.notification_type // empty' 2>/dev/null || true)
+TRANSCRIPT_PATH=$(echo "$PAYLOAD" | jq -r '.transcript_path // empty' 2>/dev/null || true)
 
 # Dump payload for debugging -- lets us evolve title/body once we see what
 # Claude actually sends for permission/idle prompts.
@@ -72,6 +74,30 @@ SHORT_ID="${SESSION_ID:0:6}"
 
 TITLE="Claude - ${PROJECT} - ${SHORT_ID}"
 BODY="${MESSAGE:-${EVENT}}"
+
+# For permission prompts, enrich the body with the concrete tool call
+# Claude is asking about -- read the last tool_use from the transcript.
+if [[ "$NOTIF_TYPE" == "permission_prompt" && -n "$TRANSCRIPT_PATH" && -f "$TRANSCRIPT_PATH" ]]; then
+  LAST_TOOL=$(tail -n 200 "$TRANSCRIPT_PATH" 2>/dev/null | jq -cR '
+      fromjson?
+      | select(type == "object" and .type == "assistant")
+      | .message.content[]?
+      | select(.type == "tool_use")
+      | {name, input}' 2>/dev/null | tail -n 1 || true)
+  if [[ -n "$LAST_TOOL" ]]; then
+    TOOL_NAME=$(echo "$LAST_TOOL" | jq -r '.name' 2>/dev/null || true)
+    TOOL_PREVIEW=$(echo "$LAST_TOOL" | jq -r '
+        .input.command
+        // .input.file_path
+        // .input.path
+        // .input.url
+        // .input.pattern
+        // (.input | tostring)' 2>/dev/null | tr '\n' ' ' | cut -c1-140)
+    if [[ -n "$TOOL_NAME" ]]; then
+      BODY="${TOOL_NAME}: ${TOOL_PREVIEW}"
+    fi
+  fi
+fi
 
 # Fire webhook; HA blueprint picks it up and pushes the actionable notification.
 curl -fsS -m 5 -X POST "${HA_URL%/}/api/webhook/${WEBHOOK_ID}" \
