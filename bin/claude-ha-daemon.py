@@ -59,6 +59,10 @@ PROMPT_GONE_GRACE_S = 15
 # Matches numbered prompt options Claude renders, e.g. " 1. Yes".
 _OPTION_LINE = re.compile(r"^\s*(\d+)\.\s")
 
+# Action prefixes the blueprint emits. Matching is explicit so tags
+# containing underscores never collide with the action name.
+KNOWN_ACTIONS = ("approve", "allowalways", "deny", "stop")
+
 
 def detect_max_option(tmux_target: str) -> int | None:
     """Read the Claude pane and return the highest visible option number.
@@ -276,10 +280,16 @@ async def handle_action_event(
         if isinstance(action_data, dict):
             tag = action_data.get("tag")
     # iOS Companion strips per-action custom data, so the blueprint encodes
-    # the tag into the action name as `<name>_<tag>`. Split it back out.
-    if action and "_" in action and not tag:
-        action, _, tag = action.partition("_")
-    if not action or not tag:
+    # the tag into the action name as `<name>_<tag>`. Strip a known prefix
+    # off the action so tags containing underscores remain intact.
+    if action and not tag:
+        for known in KNOWN_ACTIONS:
+            prefix = f"{known}_"
+            if action.startswith(prefix):
+                tag = action[len(prefix):]
+                action = known
+                break
+    if not action or action not in KNOWN_ACTIONS or not tag:
         return
 
     session = load_session(tag)
@@ -307,9 +317,22 @@ async def handle_action_event(
             pass
 
 
+def _derive_ws_url(ha_url: str) -> str:
+    """Turn `https://ha.example/` into `wss://ha.example/api/websocket`.
+
+    Scheme-aware so hosts that themselves contain the substring `http`
+    cannot be accidentally rewritten.
+    """
+    scheme, sep, rest = ha_url.rstrip("/").partition("://")
+    if not sep or scheme.lower() not in ("http", "https"):
+        raise SystemExit(f"Invalid ha_url: {ha_url!r}")
+    ws_scheme = "wss" if scheme.lower() == "https" else "ws"
+    return f"{ws_scheme}://{rest}/api/websocket"
+
+
 async def run(cfg: dict[str, Any]) -> None:
     """Main event loop: discover notify service, start cleanup, run WebSocket."""
-    ws_url = cfg["ha_url"].rstrip("/").replace("http", "ws", 1) + "/api/websocket"
+    ws_url = _derive_ws_url(cfg["ha_url"])
 
     async with aiohttp.ClientSession() as http:
         if not cfg.get("mobile_app_service"):
@@ -350,6 +373,7 @@ async def _ws_loop(
                     raise SystemExit(1)
 
                 _LOG.info("Authenticated, subscribing to events")
+                subscribe_ok = True
                 for event_type in (
                     "mobile_app_notification_action",
                     "ios.action_fired",
@@ -363,10 +387,18 @@ async def _ws_loop(
                     sub_result = await ws.receive_json()
                     if not sub_result.get("success"):
                         _LOG.error(
-                            "Subscribe %s failed: %s", event_type, sub_result
+                            "Subscribe %s failed: %s -- reconnecting",
+                            event_type, sub_result,
                         )
-                        continue
+                        subscribe_ok = False
+                        break
                     _LOG.info("Subscribed to %s", event_type)
+                if not subscribe_ok:
+                    # Break out of the websocket context; outer while True
+                    # will reconnect with backoff.
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 60)
+                    continue
 
                 backoff = 2
                 async for msg in ws:
