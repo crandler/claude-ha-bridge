@@ -180,6 +180,14 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.1.1 - 2026-04-19
+- **UX:** permission-prompt push body no longer dumps raw tool `input`
+  JSON when the tool lacks a `command`/`file_path`/`path`/`url`/`pattern`
+  field. The notify hook now also reads `query`, `description`, `prompt`,
+  `subagent_type`, `skill` and falls back to showing just the tool name
+  instead of an unreadable JSON blob for tools like `TaskUpdate` or
+  `TodoWrite`.
+
 ### 2.1.0 - 2026-04-19
 - **Reliability:** daemon gives up after 5 successive auth failures
   with a clear "check ha_token" hint, instead of letting launchd

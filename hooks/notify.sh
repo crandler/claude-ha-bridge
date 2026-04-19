@@ -112,15 +112,24 @@ if [[ "$NOTIF_TYPE" == "permission_prompt" && -n "$TRANSCRIPT_PATH" && -f "$TRAN
       | {name, input}' 2>/dev/null | tail -n 1 || true)
   if [[ -n "$LAST_TOOL" ]]; then
     TOOL_NAME=$(echo "$LAST_TOOL" | jq -r '.name' 2>/dev/null || true)
+    # Map common Claude Code tool inputs to a single readable preview field.
+    # Falls back to `empty` (not the full JSON dump) when no known field is
+    # present, so tools like TaskUpdate or TodoWrite land as just the tool
+    # name on the lock screen instead of `{"taskId":"11",...}`.
     TOOL_PREVIEW=$(echo "$LAST_TOOL" | jq -r '
         .input.command
         // .input.file_path
         // .input.path
         // .input.url
         // .input.pattern
-        // (.input | tostring)' 2>/dev/null | tr '\n' ' ' | cut -c1-140)
+        // .input.query
+        // .input.description
+        // .input.prompt
+        // .input.subagent_type
+        // .input.skill
+        // empty' 2>/dev/null | tr '\n' ' ' | cut -c1-140)
     if [[ -n "$TOOL_NAME" ]]; then
-      BODY="${TOOL_NAME}: ${TOOL_PREVIEW}"
+      BODY="${TOOL_NAME}${TOOL_PREVIEW:+: $TOOL_PREVIEW}"
     fi
   fi
 fi
