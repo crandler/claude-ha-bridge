@@ -1,7 +1,7 @@
 blueprint:
   name: Claude HA Bridge - Actionable Notifications
   description: >
-    Blueprint version: 1.6.0.
+    Blueprint version: 1.7.0.
     Receives webhooks from the Claude HA Bridge daemon on a Mac and pushes
     actionable notifications to a mobile device. Button taps become
     `mobile_app_notification_action` events, which the Mac daemon routes
@@ -25,6 +25,36 @@ blueprint:
         the Mac. The install wizard generates one if you don't have it yet.
       selector:
         text:
+    mode_entity:
+      name: Mode helper (optional)
+      description: >
+        Create an `input_select` helper in HA with the three options
+        `off`, `on`, `auto`, then pick it here. Expose that helper on
+        your dashboard to toggle notifications. Leave empty to always
+        notify.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain: input_select
+          multiple: false
+    presence_entity:
+      name: Presence entity (optional)
+      description: >
+        Required when the mode helper is set to `auto`. Any entity whose
+        state becomes `home` when you are home works (person,
+        device_tracker, binary_sensor, input_boolean). In `auto` mode,
+        notifications fire only while this entity is not `home`.
+      default: ""
+      selector:
+        entity:
+          filter:
+            - domain:
+                - person
+                - device_tracker
+                - binary_sensor
+                - input_boolean
+          multiple: false
     approve_label:
       name: Approve button label
       default: Erlauben
@@ -334,8 +364,19 @@ variables:
   notify_service: >-
     notify.mobile_app_{{ device_attr(notify_device_id, 'name') | slugify }}
   notification_tag: "{{ trigger.json.tag | default('claude', true) }}"
+  mode_entity_id: !input mode_entity
+  presence_entity_id: !input presence_entity
+  notify_mode: >-
+    {{ states(mode_entity_id) if mode_entity_id else 'on' }}
+  presence_state: >-
+    {{ states(presence_entity_id) if presence_entity_id else 'not_home' }}
 
 action:
+  - alias: "Respect mode helper and presence"
+    condition: template
+    value_template: >-
+      {{ notify_mode != 'off'
+         and not (notify_mode == 'auto' and presence_state == 'home') }}
   - action: "{{ notify_service }}"
     data:
       title: "{{ trigger.json.title | default('Claude', true) }}"

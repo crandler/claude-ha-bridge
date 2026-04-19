@@ -83,9 +83,16 @@ The wizard
 
 1. HA -> Settings -> Automations & Scenes -> Blueprints
 2. "Import Blueprint" -> paste from clipboard -> save
-3. Create an automation from the blueprint, set:
+3. *(optional)* Settings -> Devices & Services -> Helpers -> Create
+   Helper -> Dropdown. Name it `Claude Notifications Mode`, add the
+   three options `off`, `on`, `auto`. Surface it on any dashboard to
+   toggle notifications from the frontend.
+4. Create an automation from the blueprint, set:
    - `notify_device` = pick your phone from the device dropdown
    - `webhook_id` = the value the wizard showed you
+   - `mode_entity` *(optional)* = the dropdown helper from step 3
+   - `presence_entity` *(optional)* = person/device_tracker that
+     reports `home`; required when `mode_entity` is set to `auto`
 
 ### Wire the Claude Code hook
 
@@ -161,6 +168,13 @@ the automation/blueprint in HA.
 - No inbound ports on the Mac; WebSocket is outbound TLS
 
 ## Changelog
+
+### 1.7.0 - 2026-04-19
+- Blueprint: new optional `mode_entity` (an `input_select` helper with
+  the values `off` / `on` / `auto`) and `presence_entity` inputs. Off
+  silences notifications; on always notifies; auto only notifies while
+  the presence entity is not `home`. Unset behaves like the previous
+  "always notify" default.
 
 ### 1.6.0 - 2026-04-19
 - Blueprint: add fourth button `Immer erlauben` (allow-always) so the
