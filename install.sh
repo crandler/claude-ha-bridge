@@ -97,15 +97,29 @@ else
 fi
 
 # config.json ------------------------------------------------------------------
+# Merge into the existing config so optional fields a power user added
+# manually (mobile_app_service override, per-button `actions` overrides,
+# future fields) survive a re-run of the wizard.
 log "Writing ${CONFIG_FILE}"
 umask 077
-jq -n \
-  --arg ha_url "${HA_URL%/}" \
-  --arg ha_token "${HA_TOKEN}" \
-  --arg webhook_id "${WEBHOOK_ID}" \
-  '{ha_url: $ha_url, ha_token: $ha_token, webhook_id: $webhook_id}' \
-  > "${CONFIG_FILE}"
-chmod 600 "${CONFIG_FILE}"
+TMP_CFG=$(mktemp "${CONFIG_DIR}/.config.XXXXXX")
+if [[ -f "${CONFIG_FILE}" ]]; then
+  jq \
+    --arg ha_url "${HA_URL%/}" \
+    --arg ha_token "${HA_TOKEN}" \
+    --arg webhook_id "${WEBHOOK_ID}" \
+    '. + {ha_url: $ha_url, ha_token: $ha_token, webhook_id: $webhook_id}' \
+    "${CONFIG_FILE}" > "${TMP_CFG}"
+else
+  jq -n \
+    --arg ha_url "${HA_URL%/}" \
+    --arg ha_token "${HA_TOKEN}" \
+    --arg webhook_id "${WEBHOOK_ID}" \
+    '{ha_url: $ha_url, ha_token: $ha_token, webhook_id: $webhook_id}' \
+    > "${TMP_CFG}"
+fi
+chmod 600 "${TMP_CFG}"
+mv -f "${TMP_CFG}" "${CONFIG_FILE}"
 umask 022
 
 # launchd plist ----------------------------------------------------------------
