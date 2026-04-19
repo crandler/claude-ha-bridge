@@ -220,6 +220,15 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.2.0 - 2026-04-19
+- **Installer:** new `bootstrap.sh` enables a true one-liner install
+  and upgrade via
+  `bash -c "$(curl -fsSL .../bootstrap.sh)"`. Clones into
+  `~/.claude-ha-bridge` (override with `CLAUDE_HA_BRIDGE_DIR`) or
+  `git pull`s an existing checkout, then hands off to `install.sh`.
+  Manual `git clone` + `./install.sh` remains supported for users
+  who want their own checkout location.
+
 ### 2.1.8 - 2026-04-19
 - **Installer:** wait for `launchctl bootout` to fully retire the
   service before re-bootstrapping, and retry bootstrap once after 2s
