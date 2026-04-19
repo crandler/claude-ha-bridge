@@ -237,6 +237,15 @@ these are not touched by the uninstaller.
 
 ## Changelog
 
+### 2.4.0 - 2026-04-19
+- **Blueprint:** button labels and help-message body default to
+  English (`Approve`, `Always approve`, `Deny`, `Stop`,
+  `"Claude needs your input"`) so the public repo ships
+  language-neutral. Existing automations with manually configured
+  labels are unaffected. To pick up the new defaults, re-import the
+  blueprint and re-save the automation; any label you explicitly set
+  stays as-is.
+
 ### 2.3.0 - 2026-04-19
 - **Uninstaller:** new `uninstall.sh` with the same one-liner ergonomics
   as `bootstrap.sh`
