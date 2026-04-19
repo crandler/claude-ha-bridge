@@ -209,6 +209,17 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.1.6 - 2026-04-19
+- **Installer:** `install.sh` now self-updates -- runs
+  `git pull --ff-only` as the first step when invoked from a git
+  checkout. Subsequent upgrades collapse to a single `./install.sh`
+  from the cloned directory; tarball installs without `.git` skip
+  the pull silently.
+- **Docs:** README "Install" and "Upgrade" merged into one section
+  with a generic clone path (no more hard-coded
+  `~/Desktop/CODING/Privat/...`); hook-wiring snippet now reads
+  `/absolute/path/to/claude-ha-bridge/...`.
+
 ### 2.1.5 - 2026-04-19
 - **Installer:** wizard re-runs now merge into the existing
   `config.json` instead of overwriting it. Optional fields a power
