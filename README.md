@@ -169,6 +169,15 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.8.0 - 2026-04-19
+- Daemon: retract stale pushes from the phone. After a button press
+  (successful tmux dispatch) the daemon calls
+  `notify.mobile_app_*.clear_notification` with the session tag, and a
+  background task scans the sessions directory every 60s to clear any
+  notification whose session is older than 10 minutes. The notify
+  service is auto-discovered from HA; `config.json` key
+  `mobile_app_service` overrides it.
+
 ### 1.7.0 - 2026-04-19
 - Blueprint: new optional `mode_entity` (an `input_select` helper with
   the values `off` / `on` / `auto`) and `presence_entity` inputs. Off

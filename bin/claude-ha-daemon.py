@@ -44,8 +44,12 @@ _LOG = logging.getLogger("claude-ha-bridge")
 
 # Ignore button presses for sessions whose registration file is older than
 # this -- old notifications tapped much later should not inject keys into
-# whatever happens to run in the pane now.
+# whatever happens to run in the pane now. The same threshold is used by
+# the cleanup loop to retract stale pushes from the phone.
 SESSION_MAX_AGE_S = 600
+
+# How often the cleanup loop scans the sessions directory for stale entries.
+CLEANUP_INTERVAL_S = 60
 
 # Matches numbered prompt options Claude renders, e.g. " 1. Yes".
 _OPTION_LINE = re.compile(r"^\s*(\d+)\.\s")
@@ -156,7 +160,83 @@ def dispatch_to_tmux(session: dict[str, Any], keys: str) -> bool:
         return False
 
 
-async def handle_action_event(cfg: dict[str, Any], event: dict[str, Any]) -> None:
+async def discover_notify_service(
+    http: aiohttp.ClientSession, cfg: dict[str, Any]
+) -> str | None:
+    """Return the first `notify.mobile_app_*` service HA exposes, if any."""
+    url = f"{cfg['ha_url'].rstrip('/')}/api/services"
+    headers = {"Authorization": f"Bearer {cfg['ha_token']}"}
+    try:
+        async with http.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+            if resp.status != 200:
+                return None
+            for domain_entry in await resp.json():
+                if domain_entry.get("domain") != "notify":
+                    continue
+                for svc_name in domain_entry.get("services", {}):
+                    if svc_name.startswith("mobile_app_"):
+                        return f"notify.{svc_name}"
+    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        _LOG.warning("Service discovery failed: %s", err)
+    return None
+
+
+async def clear_notification(
+    http: aiohttp.ClientSession, cfg: dict[str, Any], tag: str
+) -> None:
+    """Tell HA to retract any outstanding push with this tag."""
+    svc = cfg.get("mobile_app_service")
+    if not svc:
+        return
+    _, _, svc_name = svc.partition(".")
+    url = f"{cfg['ha_url'].rstrip('/')}/api/services/notify/{svc_name}"
+    headers = {"Authorization": f"Bearer {cfg['ha_token']}"}
+    body = {"message": "clear_notification", "data": {"tag": tag}}
+    try:
+        async with http.post(
+            url, headers=headers, json=body,
+            timeout=aiohttp.ClientTimeout(total=5),
+        ) as resp:
+            if resp.status >= 300:
+                _LOG.warning("Clear notification %s failed: %s", tag, resp.status)
+            else:
+                _LOG.info("Cleared notification tag=%s", tag)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+        _LOG.warning("Clear notification %s failed: %s", tag, err)
+
+
+async def cleanup_stale_sessions(
+    http: aiohttp.ClientSession, cfg: dict[str, Any]
+) -> None:
+    """Retract phone notifications whose Claude prompt is no longer relevant."""
+    while True:
+        try:
+            await asyncio.sleep(CLEANUP_INTERVAL_S)
+            now = time.time()
+            for path in SESSIONS_DIR.glob("*.json"):
+                try:
+                    age = now - path.stat().st_mtime
+                except OSError:
+                    continue
+                if age <= SESSION_MAX_AGE_S:
+                    continue
+                tag = path.stem
+                await clear_notification(http, cfg, tag)
+                try:
+                    path.unlink()
+                except OSError as err:
+                    _LOG.warning("Failed to unlink stale session %s: %s", tag, err)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            _LOG.exception("Cleanup pass failed -- continuing")
+
+
+async def handle_action_event(
+    cfg: dict[str, Any],
+    event: dict[str, Any],
+    http: aiohttp.ClientSession | None = None,
+) -> None:
     """Process one actionable-notification event from HA.
 
     Android/cross-platform fires `mobile_app_notification_action`, iOS fires
@@ -194,69 +274,95 @@ async def handle_action_event(cfg: dict[str, Any], event: dict[str, Any]) -> Non
         "Action %s (max_option=%s) -> session %s (%s)",
         action, max_option, tag, target,
     )
-    dispatch_to_tmux(session, keys)
+    if dispatch_to_tmux(session, keys) and http is not None:
+        # Button was handled -- retract the push from the phone.
+        await clear_notification(http, cfg, tag)
+        try:
+            (SESSIONS_DIR / f"{tag}.json").unlink()
+        except OSError:
+            pass
 
 
 async def run(cfg: dict[str, Any]) -> None:
-    """Main WebSocket loop with reconnect."""
+    """Main event loop: discover notify service, start cleanup, run WebSocket."""
     ws_url = cfg["ha_url"].rstrip("/").replace("http", "ws", 1) + "/api/websocket"
-    backoff = 2
-    msg_id = 1
 
     async with aiohttp.ClientSession() as http:
-        while True:
-            try:
-                _LOG.info("Connecting to %s", ws_url)
-                async with http.ws_connect(ws_url, heartbeat=30) as ws:
-                    auth_required = await ws.receive_json()
-                    if auth_required.get("type") != "auth_required":
-                        _LOG.error("Unexpected handshake: %s", auth_required)
-                        continue
+        if not cfg.get("mobile_app_service"):
+            cfg["mobile_app_service"] = await discover_notify_service(http, cfg)
+            if cfg["mobile_app_service"]:
+                _LOG.info("Discovered notify service: %s", cfg["mobile_app_service"])
+            else:
+                _LOG.warning(
+                    "No notify.mobile_app_* service found -- "
+                    "notifications cannot be cleared from the phone"
+                )
 
-                    await ws.send_json({"type": "auth", "access_token": cfg["ha_token"]})
-                    auth_result = await ws.receive_json()
-                    if auth_result.get("type") != "auth_ok":
-                        _LOG.error("Auth failed: %s", auth_result)
-                        raise SystemExit(1)
+        cleanup_task = asyncio.create_task(cleanup_stale_sessions(http, cfg))
+        try:
+            await _ws_loop(http, cfg, ws_url)
+        finally:
+            cleanup_task.cancel()
 
-                    _LOG.info("Authenticated, subscribing to events")
-                    for event_type in (
-                        "mobile_app_notification_action",
-                        "ios.action_fired",
-                    ):
-                        await ws.send_json({
-                            "id": msg_id,
-                            "type": "subscribe_events",
-                            "event_type": event_type,
-                        })
-                        msg_id += 1
-                        sub_result = await ws.receive_json()
-                        if not sub_result.get("success"):
-                            _LOG.error(
-                                "Subscribe %s failed: %s", event_type, sub_result
-                            )
-                            continue
-                        _LOG.info("Subscribed to %s", event_type)
 
-                    backoff = 2
-                    async for msg in ws:
-                        if msg.type != aiohttp.WSMsgType.TEXT:
-                            continue
-                        payload = json.loads(msg.data)
-                        if payload.get("type") != "event":
-                            continue
-                        event = payload.get("event", {})
-                        _LOG.info(
-                            "Event %s data=%s",
-                            event.get("event_type"),
-                            json.dumps(event.get("data", {}))[:400],
+async def _ws_loop(
+    http: aiohttp.ClientSession, cfg: dict[str, Any], ws_url: str
+) -> None:
+    backoff = 2
+    msg_id = 1
+    while True:
+        try:
+            _LOG.info("Connecting to %s", ws_url)
+            async with http.ws_connect(ws_url, heartbeat=30) as ws:
+                auth_required = await ws.receive_json()
+                if auth_required.get("type") != "auth_required":
+                    _LOG.error("Unexpected handshake: %s", auth_required)
+                    continue
+
+                await ws.send_json({"type": "auth", "access_token": cfg["ha_token"]})
+                auth_result = await ws.receive_json()
+                if auth_result.get("type") != "auth_ok":
+                    _LOG.error("Auth failed: %s", auth_result)
+                    raise SystemExit(1)
+
+                _LOG.info("Authenticated, subscribing to events")
+                for event_type in (
+                    "mobile_app_notification_action",
+                    "ios.action_fired",
+                ):
+                    await ws.send_json({
+                        "id": msg_id,
+                        "type": "subscribe_events",
+                        "event_type": event_type,
+                    })
+                    msg_id += 1
+                    sub_result = await ws.receive_json()
+                    if not sub_result.get("success"):
+                        _LOG.error(
+                            "Subscribe %s failed: %s", event_type, sub_result
                         )
-                        await handle_action_event(cfg, event)
+                        continue
+                    _LOG.info("Subscribed to %s", event_type)
 
-            except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError) as err:
-                _LOG.warning("Connection dropped: %s -- retry in %ds", err, backoff)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 60)
+                backoff = 2
+                async for msg in ws:
+                    if msg.type != aiohttp.WSMsgType.TEXT:
+                        continue
+                    payload = json.loads(msg.data)
+                    if payload.get("type") != "event":
+                        continue
+                    event = payload.get("event", {})
+                    _LOG.info(
+                        "Event %s data=%s",
+                        event.get("event_type"),
+                        json.dumps(event.get("data", {}))[:400],
+                    )
+                    await handle_action_event(cfg, event, http)
+
+        except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionResetError) as err:
+            _LOG.warning("Connection dropped: %s -- retry in %ds", err, backoff)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60)
 
 
 async def _supervise(cfg: dict[str, Any]) -> None:
