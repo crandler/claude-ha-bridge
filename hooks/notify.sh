@@ -58,7 +58,7 @@ PROJECT=$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")
 # Hash the full project dir so two projects with the same basename do not
 # collide. SHA-1 is fine here: we only need collision-resistance for
 # routing, not crypto strength.
-TAG="${SESSION_ID:-$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | shasum | cut -c1-12)}"
+TAG="${SESSION_ID:-$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | shasum -a 256 | cut -c1-12)}"
 
 # Generate a fresh one-shot token for this notification. The token is the
 # only thing the daemon trusts to authorise a button press: it is stored
@@ -68,30 +68,35 @@ TAG="${SESSION_ID:-$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | shasum | cut -c
 TOKEN=$(openssl rand -hex 16)
 
 # Register tmux target if we're in tmux -- daemon reads this when a button
-# action arrives.
+# action arrives. Write via a temp file + rename so the cleanup loop
+# never sees a half-populated session file mid-write.
 if [[ -n "${TMUX:-}" ]]; then
   TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || true)
   TMUX_PANE=$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)
   if [[ -n "$TMUX_SESSION" && -n "$TMUX_PANE" ]]; then
     mkdir -p "$SESSIONS_DIR"
-    jq -n \
-      --arg target "$TMUX_PANE" \
-      --arg session "$TMUX_SESSION" \
-      --arg project "$PROJECT" \
-      --arg cwd "${CLAUDE_PROJECT_DIR:-$PWD}" \
-      --arg token "$TOKEN" \
-      --arg session_id "$SESSION_ID" \
-      '{tmux_target: $target, tmux_session: $session, project: $project,
-        cwd: $cwd, token: $token, session_id: $session_id}' \
-      > "${SESSIONS_DIR}/${TAG}.json"
-    chmod 600 "${SESSIONS_DIR}/${TAG}.json" 2>/dev/null || true
+    TMP_SESSION=$(mktemp "${SESSIONS_DIR}/.${TAG}.XXXXXX") || TMP_SESSION=""
+    if [[ -n "$TMP_SESSION" ]]; then
+      chmod 600 "$TMP_SESSION" 2>/dev/null || true
+      jq -n \
+        --arg target "$TMUX_PANE" \
+        --arg session "$TMUX_SESSION" \
+        --arg project "$PROJECT" \
+        --arg cwd "${CLAUDE_PROJECT_DIR:-$PWD}" \
+        --arg token "$TOKEN" \
+        --arg session_id "$SESSION_ID" \
+        '{tmux_target: $target, tmux_session: $session, project: $project,
+          cwd: $cwd, token: $token, session_id: $session_id}' \
+        > "$TMP_SESSION"
+      mv -f "$TMP_SESSION" "${SESSIONS_DIR}/${TAG}.json"
+    fi
   fi
 fi
 
 # Short session identifier so parallel Claude sessions are distinguishable
 # on the lock screen ("Claude - project - ab12cd").
 SHORT_ID="${SESSION_ID:0:6}"
-[[ -n "$SHORT_ID" ]] || SHORT_ID=$(echo "$PROJECT" | shasum | cut -c1-6)
+[[ -n "$SHORT_ID" ]] || SHORT_ID=$(echo "$PROJECT" | shasum -a 256 | cut -c1-6)
 
 TITLE="Claude - ${PROJECT} - ${SHORT_ID}"
 BODY="${MESSAGE:-${EVENT}}"
@@ -120,9 +125,12 @@ if [[ "$NOTIF_TYPE" == "permission_prompt" && -n "$TRANSCRIPT_PATH" && -f "$TRAN
   fi
 fi
 
-# Fire webhook; HA blueprint picks it up and pushes the actionable notification.
-curl -fsS -m 5 -X POST "${HA_URL%/}/api/webhook/${WEBHOOK_ID}" \
+# Fire webhook; HA blueprint picks it up and pushes the actionable
+# notification. We capture the HTTP status so mysterious "no push on
+# phone" issues can be diagnosed from notify.log without re-triggering.
+HTTP_CODE=$(curl -sS -m 5 -X POST "${HA_URL%/}/api/webhook/${WEBHOOK_ID}" \
   -H "Content-Type: application/json" \
+  -o /dev/null -w '%{http_code}' \
   -d "$(jq -n \
         --arg title "$TITLE" \
         --arg message "$BODY" \
@@ -130,4 +138,6 @@ curl -fsS -m 5 -X POST "${HA_URL%/}/api/webhook/${WEBHOOK_ID}" \
         --arg token "$TOKEN" \
         --arg event "$EVENT" \
         '{title: $title, message: $message, tag: $tag, token: $token, event: $event}')" \
-  >/dev/null 2>&1 || true
+  2>/dev/null || echo "ERR")
+printf '%s POST webhook -> %s\n\n' "$(date -u +%FT%TZ)" "$HTTP_CODE" \
+  >> "$NOTIFY_LOG" 2>/dev/null || true
