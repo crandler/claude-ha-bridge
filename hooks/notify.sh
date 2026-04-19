@@ -175,7 +175,9 @@ HTTP_CODE=$(curl -sS -m 5 -X POST "${HA_URL%/}/api/webhook/${WEBHOOK_ID}" \
         --arg tag "$TAG" \
         --arg token "$TOKEN" \
         --arg event "$EVENT" \
-        '{title: $title, message: $message, tag: $tag, token: $token, event: $event}')" \
+        --arg notification_type "$NOTIF_TYPE" \
+        '{title: $title, message: $message, tag: $tag, token: $token,
+          event: $event, notification_type: $notification_type}')" \
   2>/dev/null || echo "ERR")
 printf '%s POST webhook -> %s\n\n' "$(date -u +%FT%TZ)" "$HTTP_CODE" \
   >> "$NOTIFY_LOG" 2>/dev/null || true
