@@ -184,6 +184,25 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.1.3 - 2026-04-19
+- **UX:** notifications now carry a tap URL pointing to the Claude iOS
+  app (`https://claude.ai/code` Universal Link by default,
+  configurable via the new `tap_url` blueprint input). A short tap on
+  the push opens the app straight into the Remote Control Code view;
+  long-press still surfaces the action buttons.
+- **UX:** action buttons are now conditional on `notification_type`.
+  Permission prompts keep the full Approve/Always/Deny/Stop set so you
+  can decide from the lock screen. Idle prompts, inline questions and
+  any other waiting state get a slim push with a configurable
+  help-needed body (`help_message` input, default "Claude benötigt
+  Deine Unterstützung") and only the Stop button as a kill switch.
+- **Hook:** `notify.sh` includes the `notification_type` field in the
+  webhook payload so the blueprint can branch on it without
+  re-inspecting the transcript.
+- **Upgrade:** re-import blueprint v2.1.3 and re-save the automation;
+  the new `tap_url` and `help_message` inputs accept their defaults
+  silently if you don't set them.
+
 ### 2.1.2 - 2026-04-19
 - **Reliability:** LaunchAgent `KeepAlive` no longer restarts the daemon
   on a regular non-zero exit; the auth-failure SystemExit(1) was being
