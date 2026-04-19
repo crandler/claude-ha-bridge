@@ -43,6 +43,13 @@ TRANSCRIPT_PATH=$(echo "$PAYLOAD" | jq -r '.transcript_path // empty' 2>/dev/nul
 # Dump payload for debugging -- lets us evolve title/body once we see what
 # Claude actually sends for permission/idle prompts.
 mkdir -p "$CONFIG_DIR"
+# Rotate notify.log at 1 MB, keeping a single .1 backup. Mirrors what the
+# daemon's RotatingFileHandler does for daemon.log so neither file can
+# silently fill the disk on long-running installs.
+if [[ -f "$NOTIFY_LOG" ]] \
+   && [[ "$(stat -f%z "$NOTIFY_LOG" 2>/dev/null || echo 0)" -gt 1048576 ]]; then
+  mv -f "$NOTIFY_LOG" "${NOTIFY_LOG}.1" 2>/dev/null || true
+fi
 {
   printf '%s --- %s\n' "$(date -u +%FT%TZ)" "$EVENT"
   echo "$PAYLOAD"
@@ -50,6 +57,17 @@ mkdir -p "$CONFIG_DIR"
 } >> "$NOTIFY_LOG" 2>/dev/null || true
 # Belt-and-braces: enforce 600 even if the file was created pre-umask.
 chmod 600 "$NOTIFY_LOG" 2>/dev/null || true
+
+# The daemon routes button taps via tmux send-keys. If we are not running
+# inside tmux we cannot register a target pane -- a push without a target
+# would arrive on the phone but every button would silently drop in the
+# daemon ("token did not match"). Skip the webhook entirely so the user
+# does not get a dead notification.
+if [[ -z "${TMUX:-}" ]]; then
+  printf '%s skipping push: not running inside tmux\n\n' "$(date -u +%FT%TZ)" \
+    >> "$NOTIFY_LOG" 2>/dev/null || true
+  exit 0
+fi
 
 # Tag is stable per Claude session and used for iOS push grouping only --
 # NOT for authorising button presses. Falls back to a project path hash
@@ -60,6 +78,17 @@ PROJECT=$(basename "${CLAUDE_PROJECT_DIR:-$PWD}")
 # routing, not crypto strength.
 TAG="${SESSION_ID:-$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | shasum -a 256 | cut -c1-12)}"
 
+# Defense in depth: the tag becomes the session-file basename and the iOS
+# notification tag. Reject anything that could break out of SESSIONS_DIR
+# via path traversal or feed unexpected characters into HA. Both real
+# sources (Claude session_id UUID, SHA-256 12-hex fallback) match this
+# whitelist by construction.
+if [[ ! "$TAG" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+  printf '%s skipping push: tag %q failed whitelist\n\n' "$(date -u +%FT%TZ)" "$TAG" \
+    >> "$NOTIFY_LOG" 2>/dev/null || true
+  exit 0
+fi
+
 # Generate a fresh one-shot token for this notification. The token is the
 # only thing the daemon trusts to authorise a button press: it is stored
 # in the session file below and must match bit-for-bit on the resulting
@@ -67,29 +96,29 @@ TAG="${SESSION_ID:-$(printf '%s' "${CLAUDE_PROJECT_DIR:-$PWD}" | shasum -a 256 |
 # an unknown token is silently dropped.
 TOKEN=$(openssl rand -hex 16)
 
-# Register tmux target if we're in tmux -- daemon reads this when a button
-# action arrives. Write via a temp file + rename so the cleanup loop
-# never sees a half-populated session file mid-write.
-if [[ -n "${TMUX:-}" ]]; then
-  TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || true)
-  TMUX_PANE=$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)
-  if [[ -n "$TMUX_SESSION" && -n "$TMUX_PANE" ]]; then
-    mkdir -p "$SESSIONS_DIR"
-    TMP_SESSION=$(mktemp "${SESSIONS_DIR}/.${TAG}.XXXXXX") || TMP_SESSION=""
-    if [[ -n "$TMP_SESSION" ]]; then
-      chmod 600 "$TMP_SESSION" 2>/dev/null || true
-      jq -n \
-        --arg target "$TMUX_PANE" \
-        --arg session "$TMUX_SESSION" \
-        --arg project "$PROJECT" \
-        --arg cwd "${CLAUDE_PROJECT_DIR:-$PWD}" \
-        --arg token "$TOKEN" \
-        --arg session_id "$SESSION_ID" \
-        '{tmux_target: $target, tmux_session: $session, project: $project,
-          cwd: $cwd, token: $token, session_id: $session_id}' \
-        > "$TMP_SESSION"
-      mv -f "$TMP_SESSION" "${SESSIONS_DIR}/${TAG}.json"
-    fi
+# Register tmux target so the daemon can route a button-action back here.
+# Write via a temp file + rename so the cleanup loop never observes a
+# half-populated session file mid-write. We already exited above if not
+# inside tmux, so TMUX is guaranteed set; tmux display-message can still
+# fail if the server died between checks -- skip the register in that case.
+TMUX_SESSION=$(tmux display-message -p '#S' 2>/dev/null || true)
+TMUX_PANE=$(tmux display-message -p '#{pane_id}' 2>/dev/null || true)
+if [[ -n "$TMUX_SESSION" && -n "$TMUX_PANE" ]]; then
+  mkdir -p "$SESSIONS_DIR"
+  TMP_SESSION=$(mktemp "${SESSIONS_DIR}/.${TAG}.XXXXXX") || TMP_SESSION=""
+  if [[ -n "$TMP_SESSION" ]]; then
+    chmod 600 "$TMP_SESSION" 2>/dev/null || true
+    jq -n \
+      --arg target "$TMUX_PANE" \
+      --arg session "$TMUX_SESSION" \
+      --arg project "$PROJECT" \
+      --arg cwd "${CLAUDE_PROJECT_DIR:-$PWD}" \
+      --arg token "$TOKEN" \
+      --arg session_id "$SESSION_ID" \
+      '{tmux_target: $target, tmux_session: $session, project: $project,
+        cwd: $cwd, token: $token, session_id: $session_id}' \
+      > "$TMP_SESSION"
+    mv -f "$TMP_SESSION" "${SESSIONS_DIR}/${TAG}.json"
   fi
 fi
 
