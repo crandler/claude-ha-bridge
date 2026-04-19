@@ -129,6 +129,17 @@ the existing one ("Re-import" -> paste -> save), then open the
 automation and *Save* it once so HA picks up any new inputs. Defaults
 take effect silently.
 
+**Input-persistence gotcha:** a re-import only propagates new default
+values to inputs the automation never had an explicit value for. Any
+input HA once wrote a concrete value into -- even if that value was
+just the blueprint's old default at creation time -- stays on the old
+value after re-import. Observed on the 2.3.0 -> 2.4.0 bump, where
+`help_message` remained on its old German string until reset. Fix on
+the automation side: open the automation in HA, click the three-dot
+menu next to the affected input and choose "Reset to default", or
+edit the automation YAML and drop the stale key. Nothing the
+blueprint can do about it.
+
 ### Wire the Claude Code hook
 
 Add to `~/.claude/settings.json` (merge with existing `hooks`). The
