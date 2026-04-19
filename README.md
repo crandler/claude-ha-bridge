@@ -162,6 +162,10 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.2.1 - 2026-04-19
+- Blueprint: quote `none`/`default` sound-selector values so YAML does not
+  coerce them to `null`, which suppressed the dropdown in HA.
+
 ### 1.2.0 - 2026-04-19
 - Blueprint: `notification_sound` input is now a dropdown with `Default`
   and `None (silent)` presets; custom filenames remain possible via the
