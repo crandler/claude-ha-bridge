@@ -62,24 +62,40 @@ install.sh                           # interactive installer wizard
 - A Home Assistant **long-lived access token**
   (HA user profile -> Security -> Long-lived access tokens)
 
-## Install
+## Install / Upgrade
+
+Same one-liner for both. Clone wherever you like:
 
 ```bash
-git clone <this-repo> ~/Desktop/CODING/Privat/claude-ha-bridge
-cd ~/Desktop/CODING/Privat/claude-ha-bridge
+git clone https://github.com/crandler/claude-ha-bridge.git
+cd claude-ha-bridge
 ./install.sh
 ```
 
-The wizard
+For subsequent upgrades, from the same directory:
 
-1. creates `~/.config/claude-ha-bridge/` with a Python venv
-2. asks for HA URL, token, webhook ID (generates one if empty)
-3. writes `config.json` with mode `600`
-4. renders `launchd/com.crandler.claude-ha-bridge.plist` into
-   `~/Library/LaunchAgents/` and loads it via `launchctl bootstrap`
-5. copies the Blueprint YAML to your clipboard
+```bash
+./install.sh
+```
+
+`install.sh` is idempotent and self-updating:
+
+1. `git pull --ff-only` (skipped on tarball installs)
+2. creates `~/.config/claude-ha-bridge/` with a Python venv if missing,
+   keeps `aiohttp` up to date
+3. on first run asks for HA URL, token, webhook ID; on re-runs
+   re-uses the existing values as defaults (just press Enter)
+4. merges into `config.json` (mode `600`) -- optional fields like
+   `mobile_app_service` or `actions` overrides are preserved
+5. re-renders the LaunchAgent plist into `~/Library/LaunchAgents/`
+   and reloads the daemon (`launchctl bootout` + `bootstrap`)
+6. copies the latest Blueprint YAML to your clipboard
+
+Hook entry in `~/.claude/settings.json` is unchanged across upgrades.
 
 ### Finish on the HA side
+
+On first install:
 
 1. HA -> Settings -> Automations & Scenes -> Blueprints
 2. "Import Blueprint" -> paste from clipboard -> save
@@ -94,9 +110,18 @@ The wizard
    - `presence_entity` *(optional)* = person/device_tracker that
      reports `home`; required when `mode_entity` is set to `auto`
 
+On subsequent upgrades, only when the changelog mentions a blueprint
+bump (or `Blueprint version: X.Y.Z` in `ha/claude-ha-bridge.yaml` is
+ahead of what HA shows): re-import the blueprint via the menu next to
+the existing one ("Re-import" -> paste -> save), then open the
+automation and *Save* it once so HA picks up any new inputs. Defaults
+take effect silently.
+
 ### Wire the Claude Code hook
 
-Add to `~/.claude/settings.json` (merge with existing `hooks`):
+Add to `~/.claude/settings.json` (merge with existing `hooks`). The
+path must point at the `notify.sh` inside your clone -- adjust to your
+location:
 
 ```json
 {
@@ -105,47 +130,12 @@ Add to `~/.claude/settings.json` (merge with existing `hooks`):
       "matcher": "permission_prompt|idle_prompt",
       "hooks": [{
         "type": "command",
-        "command": "/Users/YOU/Desktop/CODING/Privat/claude-ha-bridge/hooks/notify.sh"
+        "command": "/absolute/path/to/claude-ha-bridge/hooks/notify.sh"
       }]
     }]
   }
 }
 ```
-
-## Upgrade
-
-When pulling a new version of this repo:
-
-```bash
-cd ~/Desktop/CODING/Privat/claude-ha-bridge
-git pull
-./install.sh
-```
-
-The wizard re-uses your existing `ha_url`, `ha_token` and `webhook_id`
-as defaults (just press Enter), merges them back into `config.json`
-without touching optional fields like `mobile_app_service` or
-`actions` overrides, re-renders the LaunchAgent plist with the new
-daemon code and reloads the daemon (`launchctl bootout` + `bootstrap`).
-The hook entry in `~/.claude/settings.json` does not need to change.
-
-If the changelog mentions a blueprint bump (or the
-`Blueprint version: X.Y.Z` line in `ha/claude-ha-bridge.yaml` is newer
-than what HA shows), re-import the blueprint:
-
-1. The wizard already copied the new YAML to your clipboard. If you
-   skipped the wizard, run `pbcopy < ha/claude-ha-bridge.yaml`.
-2. HA: Settings -> Automations & Scenes -> Blueprints -> menu next to
-   *Claude HA Bridge - Actionable Notifications* -> "Re-import" ->
-   paste -> save.
-3. Open the existing automation, *Save* it once so HA picks up any
-   new inputs. Defaults (`tap_url`, `help_message` etc.) take effect
-   silently if you don't change them.
-
-No data loss on upgrade: session files in
-`~/.config/claude-ha-bridge/sessions/` are short-lived (max 10 min),
-the daemon log rotates automatically, and the venv keeps `aiohttp`
-across runs.
 
 ## How a round-trip looks
 
