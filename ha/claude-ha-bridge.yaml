@@ -1,6 +1,7 @@
 blueprint:
-  name: Claude HA Bridge - Actionable Notifications
+  name: Claude HA Bridge - Actionable Notifications (v1.2.2)
   description: >
+    Version 1.2.2.
     Receives webhooks from the Claude HA Bridge daemon on a Mac and pushes
     actionable notifications to a mobile device. Button taps become
     `mobile_app_notification_action` events, which the Mac daemon routes

@@ -162,6 +162,10 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 1.2.2 - 2026-04-19
+- Blueprint: surface the version in the blueprint name and description so
+  re-imports are visibly confirmed in the HA UI.
+
 ### 1.2.1 - 2026-04-19
 - Blueprint: quote `none`/`default` sound-selector values so YAML does not
   coerce them to `null`, which suppressed the dropdown in HA.
