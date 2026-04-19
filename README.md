@@ -180,6 +180,35 @@ the automation/blueprint in HA.
 
 ## Changelog
 
+### 2.1.0 - 2026-04-19
+- **Reliability:** daemon gives up after 5 successive auth failures
+  with a clear "check ha_token" hint, instead of letting launchd
+  throttle-loop forever. Backoff and auth-fail counters reset
+  immediately on `auth_ok`; `msg_id` resets per connection.
+- **Reliability:** cleanup task is awaited after cancel on shutdown so
+  no `ResourceWarning` leaks from in-flight HTTP requests.
+- **Reliability:** daemon.log now rotates at 1 MB with 3 backups --
+  long-running installs cannot silently fill the disk.
+- **Security (S5):** `config.json` action overrides are validated
+  against a whitelist of plausible answer keys. A tampered config can
+  no longer slip arbitrary keystrokes into the Claude pane.
+- **Security (S6):** installer warns loudly when the HA URL is plain
+  `http://` -- the long-lived token would otherwise travel unencrypted
+  on every reconnect.
+- **Robustness (B6):** `handle_action_event` re-checks the pane right
+  before dispatch. If the prompt disappeared between token lookup and
+  `send-keys` (user answered in the terminal meanwhile), no keys are
+  injected and the push is retracted.
+- **Robustness:** `send-keys` uses tmux named keys (`C-c`, `C-d`) for
+  control characters so interpretation is mode-independent.
+- **Robustness:** pane scan widened from 15 to 25 lines to cover
+  wrapped option titles at 80-col terminals; plausibility cap
+  relaxed from 5 to 9.
+- **Privacy:** full HA event payloads are logged at DEBUG, not INFO.
+- **Hook:** atomic session-file write via `mktemp + mv`. HTTP status of
+  the webhook POST is appended to `notify.log` for diagnostics. Tag
+  fallback switched from SHA-1 to SHA-256.
+
 ### 2.0.0 - 2026-04-19 (breaking)
 - **Security (S1):** notify.sh now generates a fresh 128-bit one-shot
   token per push. The Blueprint encodes it into each action button and
