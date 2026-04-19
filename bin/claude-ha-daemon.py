@@ -98,6 +98,17 @@ KNOWN_ACTIONS = ("approve", "allowalways", "deny", "stop")
 # generated via `openssl rand -hex 16`.
 _VALID_TOKEN = re.compile(r"^[a-f0-9]{32}$")
 
+# Whitelist for config.json "actions" override values. Limits the blast
+# radius if the config file is ever tampered with: only single-digit
+# answers (for Claude prompts) and a small set of control keys are
+# accepted as overrides. Anything else is logged and ignored.
+_VALID_OVERRIDE_KEYS = frozenset({
+    "1\n", "2\n", "3\n", "4\n", "5\n",
+    "y\n", "n\n",
+    "\x03",  # Ctrl-C
+    "\x04",  # Ctrl-D
+})
+
 
 def detect_max_option(tmux_target: str) -> int | None:
     """Read the Claude pane and return the highest visible option number.
@@ -142,15 +153,22 @@ def detect_max_option(tmux_target: str) -> int | None:
 def resolve_keys(action: str, max_option: int | None, overrides: dict[str, str]) -> str | None:
     """Pick the key sequence to send for a button, given the live prompt shape.
 
-    Overrides from `config.json` take precedence so power users can remap
-    any button to a literal key string. Otherwise:
+    Overrides from `config.json` take precedence but are restricted to a
+    whitelist of plausible answer keys. Anything outside the whitelist is
+    logged and ignored, so a tampered config cannot slip arbitrary
+    keystrokes into the Claude pane. Otherwise:
     - approve      -> option 1
     - allowalways  -> option 2 (only if 3+ options; falls back to option 1)
     - deny         -> last option (2 or 3)
     - stop         -> Ctrl-C
     """
     if action in overrides:
-        return overrides[action]
+        override = overrides[action]
+        if override in _VALID_OVERRIDE_KEYS:
+            return override
+        _LOG.warning(
+            "Ignoring override for %r: %r not in whitelist", action, override
+        )
     mo = max_option or 2
     if action == "approve":
         return "1\n"
@@ -202,17 +220,25 @@ def find_session_by_token(token: str) -> tuple[Path, dict[str, Any]] | None:
 
 
 def dispatch_to_tmux(session: dict[str, Any], keys: str) -> bool:
-    """Send keys to the tmux pane registered for a Claude session."""
+    """Send keys to the tmux pane registered for a Claude session.
+
+    Literal control characters are translated into tmux's named-key form
+    so `send-keys` interprets them unambiguously regardless of the
+    pane's current mode.
+    """
     target = session.get("tmux_target")
     if not target:
         _LOG.warning("Session has no tmux_target: %s", session)
         return False
+    argv = ["tmux", "send-keys", "-t", target]
+    if keys == "\x03":
+        argv.append("C-c")
+    elif keys == "\x04":
+        argv.append("C-d")
+    else:
+        argv.append(keys)
     try:
-        subprocess.run(
-            ["tmux", "send-keys", "-t", target, keys],
-            check=True,
-            timeout=5,
-        )
+        subprocess.run(argv, check=True, timeout=5)
         _LOG.info("Dispatched %r to %s", keys, target)
         return True
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as err:
