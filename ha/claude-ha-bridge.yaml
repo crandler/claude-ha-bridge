@@ -356,7 +356,12 @@ trigger:
     webhook_id: !input webhook_id
     allowed_methods:
       - POST
-    local_only: false
+    # Keep the webhook reachable only from within your HA network. The
+    # Mac daemon hits HA directly and does not need the public internet
+    # for the hook POST. Setting this to false opens the webhook to any
+    # caller that knows the id -- only do that if you route through HA
+    # Nabu Casa without a trusted LAN.
+    local_only: true
 
 variables:
   push_sound: !input notification_sound
